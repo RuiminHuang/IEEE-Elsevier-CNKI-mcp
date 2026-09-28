@@ -263,7 +263,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="ieee_search",
-            description="Search IEEE Xplore for papers. Requires prior login via ieee_login.",
+            description="Search IEEE Xplore. No login needed. Supports paging via 'page'.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -275,7 +275,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="ieee_detail",
-            description="Get full paper metadata from an IEEE Xplore paper page.",
+            description="Get full paper metadata from an IEEE Xplore document page. No login needed.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -286,7 +286,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="ieee_download",
-            description="Download a paper PDF from IEEE Xplore. Uses browser JS fetch with CARSI cookies. Saves to downloads/.",
+            description="Download a paper PDF from IEEE Xplore. Requires institutional login (see ieee_login). Saves to downloads/.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -304,7 +304,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="sciencedirect_search",
-            description="Search ScienceDirect for papers. Requires prior login via sciencedirect_login.",
+            description="Search ScienceDirect. No login needed. Supports paging via 'page'.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -316,7 +316,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="sciencedirect_detail",
-            description="Get full paper metadata from a ScienceDirect article page.",
+            description="Get full paper metadata from a ScienceDirect article page. No login needed.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -327,7 +327,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="sciencedirect_download",
-            description="Download a paper PDF from ScienceDirect. Cloudflare may require manual verification. Saves to downloads/.",
+            description="Download a paper PDF from ScienceDirect. Requires institutional login (see sciencedirect_login); a security check may need manual verification. Saves to downloads/.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -350,7 +350,7 @@ async def list_tools() -> list[Tool]:
                 "For basic search, only 'query' is needed. "
                 "Optional filters (author, journal, year_start, year_end) trigger professional search (专业检索) "
                 "using CNKI query syntax: SU=topic AND AU=author AND LY=journal. "
-                "Do NOT use author:/journal:/year: syntax — those are not supported by CNKI."
+                "Do NOT use author:/journal:/year: syntax — those are not supported by CNKI. No login needed."
             ),
             inputSchema={
                 "type": "object",
@@ -368,7 +368,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="cnki_detail",
-            description="Get full paper metadata from a CNKI paper detail page.",
+            description="Get full paper metadata from a CNKI paper detail page. No login needed.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -379,7 +379,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="cnki_download",
-            description="Download a paper PDF/CAJ from CNKI. Requires user to be logged in to CNKI in Chrome.",
+            description="Download a paper PDF (or CAJ if no PDF) from CNKI. Requires CNKI institutional login in the browser.",
             inputSchema={
                 "type": "object",
                 "properties": {
