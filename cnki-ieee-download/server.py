@@ -171,12 +171,20 @@ def _need_action_response(db: str, action: str) -> list[TextContent]:
 
 async def _check_login(db: str, page) -> str:
     """Open db's home page if needed and report 'ok', 'login' or 'challenge'."""
+    home = get_db(db)["home_url"]
+    text_js = "() => document.body.innerText.slice(0, 5000)"
     try:
         if urlparse(page.url).netloc != _db_domain(db) or _is_login_url(page.url):
-            await page.goto(get_db(db)["home_url"], wait_until="domcontentloaded", timeout=30000)
+            await page.goto(home, wait_until="domcontentloaded", timeout=30000)
         if _is_login_url(page.url):
             return "login"
-        text = await page.evaluate("() => document.body.innerText.slice(0, 5000)")
+        text = await page.evaluate(text_js)
+        if len(text.strip()) < MIN_PAGE_TEXT and page.url != home:
+            # a PDF / redirect page on the site says nothing about login: ask the home page
+            await page.goto(home, wait_until="domcontentloaded", timeout=30000)
+            if _is_login_url(page.url):
+                return "login"
+            text = await page.evaluate(text_js)
     except Exception as e:
         log.debug(f"Login check failed for {db}: {e}")
         return "login"
@@ -591,6 +599,10 @@ async def _sd_fetch_pdf(page, url: str) -> str | None:
             if "sciencedirectassets" in pdf_page.url:
                 break
             await asyncio.sleep(0.25)
+        try:   # a freshly opened tab may not have rendered anything yet
+            await pdf_page.wait_for_load_state("domcontentloaded", timeout=15000)
+        except Exception:
+            pass
 
         # Give a bot check a short grace period; if it still blocks, hand over to the user
         # (ACTION_REQUIRED) instead of holding the tool call for minutes.
@@ -614,10 +626,15 @@ async def _sd_fetch_pdf(page, url: str) -> str | None:
 
         for retry in range(3):
             try:
-                return await pdf_page.evaluate(_FETCH_AS_BASE64_JS, None)
+                b64 = await pdf_page.evaluate(_FETCH_AS_BASE64_JS, None)
             except Exception as e:
                 log.debug(f"SD fetch retry {retry + 1}: {e}")
                 await asyncio.sleep(2)
+                continue
+            if b64 and not b64.startswith(("ERROR:", "HTTP ")) and _is_challenge_html(base64.b64decode(b64[:5464])):
+                keep_open = True   # the check page itself came back; the user completes it in that tab
+                return None
+            return b64
         return "ERROR: fetching the PDF page failed"
     finally:
         if pdf_page is not page and not keep_open:
@@ -651,6 +668,15 @@ def _unique_path(directory: Path, title: str, ext: str) -> Path:
 def _looks_like_html(head: bytes) -> bool:
     h = head.lstrip()[:200].lower()
     return h.startswith((b"<!doctype", b"<html", b"<?xml", b"<head", b"<body")) or b"<html" in h
+
+
+def _is_challenge_html(data: bytes) -> bool:
+    """Fetched bytes are a bot-check page rather than the file. Also catches pages whose
+    visible text is rendered later, via Elsevier's static <title>Security verification</title>."""
+    if not _looks_like_html(data[:512]):
+        return False
+    text = data[:4096].decode("utf-8", errors="replace")
+    return is_challenge(text) or "<title>security verification" in text.lower()
 
 
 async def _browser_download(browser, click, save_dir: Path,
@@ -755,6 +781,8 @@ async def handle_download(db: str, args: dict) -> list[TextContent]:
                  f"URL: {page.url[:200]}")]
 
     pdf_data = base64.b64decode(pdf_b64)
+    if pdf_data[:4] != b'%PDF' and _is_challenge_html(pdf_data):
+        return _need_action_response(db, "PDF 地址返回了安全验证页面（Cloudflare / Security verification），请在浏览器中完成验证后重试下载。")
     if pdf_data[:4] != b'%PDF':
         snippet = pdf_data[:200].decode('utf-8', errors='replace')
         await page.goto(

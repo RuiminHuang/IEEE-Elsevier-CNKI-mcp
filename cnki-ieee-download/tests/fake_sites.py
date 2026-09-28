@@ -79,6 +79,10 @@ def _respond(request, st: FakeState):
             return 200, "text/html", ("<!DOCTYPE html><html><head><title>Security verification</title></head>"
                                       "<body><h1>Request Verification: In Progress</h1>"
                                       "<p>If you are unable to access your content please try again.</p></body></html>")
+        if st.sd_challenge == "elsevier_late":   # same page, but its text renders after a while
+            return 200, "text/html", ("<!DOCTYPE html><html><head><title>Security verification</title></head>"
+                                      "<body><script>setTimeout(() => document.body.innerHTML ="
+                                      " '<h1>Request Verification: In Progress</h1>', 4000)</script></body></html>")
         return 200, "text/plain", PDF_BYTES  # text/plain keeps headless Chrome from opening a PDF viewer
     return _cnki(u.path, q, st)
 
@@ -210,6 +214,8 @@ def _sd(path, q, st):
                 f"<ol class='search-result-wrapper'>{''.join(items)}</ol>")
         return 200, "text/html", _html(body)
     m = re.match(r"/science/article/pii/([A-Z0-9]+)(/pdfft)?", path)
+    if m and m.group(2) and q.get("stay"):   # an almost empty page on the site (e.g. mid-redirect)
+        return 200, "text/html", "<!doctype html><html><body></body></html>"
     if m and m.group(2):
         target = f"https://pdf.sciencedirectassets.com/{m.group(1)}.pdf"
         return 200, "text/html", _html(f"<script>location.replace('{target}')</script>")
