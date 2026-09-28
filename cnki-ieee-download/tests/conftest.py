@@ -111,6 +111,7 @@ def cdp_browser(browser_exe, tmp_path, monkeypatch):
 async def srv(cdp_browser):
     """The server module with clean global state; disconnects Playwright afterwards."""
     server._auth, server._pages = None, {}
+    server._locks.clear()   # each test runs in its own event loop
     yield server
     if server._auth:
         try:
@@ -118,6 +119,7 @@ async def srv(cdp_browser):
         except Exception:
             pass
     server._auth, server._pages = None, {}
+    server._locks.clear()
 
 
 @pytest.fixture

@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import time
+from contextlib import AsyncExitStack
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -39,7 +40,21 @@ app = Server("cnki-ieee-download")
 
 _auth: CarsiAuth | None = None
 _pages: dict = {}
+_locks: dict[str, asyncio.Lock] = {}
 DB_LIST = ", ".join(list_dbs())
+
+
+def _lock_for(key: str) -> asyncio.Lock:
+    return _locks.setdefault(key, asyncio.Lock())
+
+
+def _lock_keys(name: str) -> list[str]:
+    """Tools of one database share one browser tab, so they run one at a time.
+    logout tears the connection down, so it waits for every database."""
+    if name == "logout":
+        return list_dbs()
+    db = name.split("_", 1)[0]
+    return [db] if db in list_dbs() else []
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -69,22 +84,23 @@ async def _ensure_connection(stale: CarsiAuth | None = None) -> str | None:
     """Ensure a live CDP connection. `stale` is a connection the caller found broken
     even though it still looked alive. Returns error message or None."""
     global _auth, _pages
-    if _auth and _auth.is_alive() and _auth is not stale:
-        return None
-    if _auth:
-        log.info("[CDP] Connection lost, reconnecting...")
+    async with _lock_for("__conn__"):
+        if _auth and _auth.is_alive() and _auth is not stale:
+            return None
+        if _auth:
+            log.info("[CDP] Connection lost, reconnecting...")
+            try:
+                await _auth.stop()
+            except Exception:
+                pass
+        _auth, _pages = None, {}
+        auth = CarsiAuth()
         try:
-            await _auth.stop()
-        except Exception:
-            pass
-    _auth, _pages = None, {}
-    auth = CarsiAuth()
-    try:
-        await auth.start()   # also restores saved cookies
-    except RuntimeError as e:
-        return str(e)
-    _auth = auth
-    return None
+            await auth.start()   # also restores saved cookies
+        except RuntimeError as e:
+            return str(e)
+        _auth = auth
+        return None
 
 
 async def _ensure_page(db: str):
@@ -380,7 +396,10 @@ async def _dispatch(name: str, args: dict) -> list[TextContent]:
 async def call_tool(name: str, args: dict) -> list[TextContent]:
     t0 = time.time()
     try:
-        result = await _dispatch(name, args)
+        async with AsyncExitStack() as stack:
+            for key in _lock_keys(name):
+                await stack.enter_async_context(_lock_for(key))
+            result = await _dispatch(name, args)
         elapsed = time.time() - t0
         if result:
             result[0].text += f"\n\n⏱ {elapsed:.1f}s"
