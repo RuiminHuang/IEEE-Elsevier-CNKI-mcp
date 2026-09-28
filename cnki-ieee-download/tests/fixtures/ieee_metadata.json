@@ -1,0 +1,95 @@
+{
+ "title": "Design and Implementation of Signal Processing System for Two-Dimensional Electric Scanning Radar",
+ "displayDocTitle": "Design and Implementation of Signal Processing System for Two-Dimensional Electric Scanning Radar",
+ "authors": [
+  {
+   "name": "Ziye Wang"
+  },
+  {
+   "name": "Renhong Xie"
+  },
+  {
+   "name": "Zongmin Liu"
+  },
+  {
+   "name": "Weilin Wang"
+  },
+  {
+   "name": "Yongnan Zhou"
+  },
+  {
+   "name": "Xiaoyan Liu"
+  },
+  {
+   "name": "Peng Li"
+  },
+  {
+   "name": "Yibin Rui"
+  }
+ ],
+ "abstract": "With the progress of technology, phased array radar is more and more widely used. Compared with traditional mechanical scanning radar, phased array radar has the advantages of flexible beam pointing, short response time, high data rate, strong anti-jamming ability and high reliability. The signal processing system of phased array radar is the key to its performance. This paper introduces the hardware design of a two-dimensional electric scanning phased array radar signal processing system. In order to meet the characteristics of phased array radar, we propose a signal processing hardware design scheme based on Xilinx FPGA, kinex-7 and multi-core digital signal processor (DSP). The following experiments and tests show that the signal processing system can meet the design requirements.",
+ "doi": "10.1109/ICSPS58776.2022.00106",
+ "publicationTitle": "2022 14th International Conference on Signal Processing Systems (ICSPS)",
+ "publicationYear": "2022",
+ "publicationDate": "November 2022",
+ "startPage": "573",
+ "endPage": "578",
+ "keywords": [
+  {
+   "type": "IEEE Keywords",
+   "kwd": [
+    "Phased arrays",
+    "Array signal processing",
+    "Radar",
+    "Digital signal processing",
+    "Parallel processing",
+    "Radar signal processing",
+    "Hardware"
+   ]
+  },
+  {
+   "type": "Index Terms",
+   "kwd": [
+    "Signal Processing",
+    "Signal Processing System",
+    "Two-dimensional Scanning",
+    "Radar Scans",
+    "Phased Array",
+    "Digital Signal",
+    "Digital Signal Processing",
+    "High Data Rate",
+    "Radar Signal Processing",
+    "Power Consumption",
+    "Analog-to-digital Converter",
+    "Antenna Array",
+    "Low Power Consumption",
+    "Frequency Sweep",
+    "Submodule",
+    "Radar System",
+    "Unit Distance",
+    "Total Harmonic Distortion",
+    "Inclinometer",
+    "Signal Processing Unit",
+    "Coherent Processing Interval",
+    "Digital Beamforming",
+    "Radar Receiver",
+    "External Interface",
+    "Hardware Circuit",
+    "Pulse Compression",
+    "External Memory",
+    "Development Cycle"
+   ]
+  },
+  {
+   "type": "Author Keywords",
+   "kwd": [
+    "Phased array radar",
+    "signal processing",
+    "FPGA",
+    "multicore DSP"
+   ]
+  }
+ ],
+ "pdfUrl": "/stamp/stamp.jsp?tp=&arnumber=10218450",
+ "articleNumber": "10218450"
+}

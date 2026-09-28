@@ -1,0 +1,119 @@
+{
+ "totalRecords": 8021,
+ "totalPages": 321,
+ "startRecord": 0,
+ "endRecord": 25,
+ "records": [
+  {
+   "articleNumber": "10218450",
+   "articleTitle": "Design and Implementation of Signal Processing System for Two-Dimensional Electric Scanning Radar",
+   "authors": [
+    {
+     "preferredName": "Ziye Wang",
+     "normalizedName": "Z. Wang"
+    },
+    {
+     "preferredName": "Renhong Xie",
+     "normalizedName": "R. Xie"
+    },
+    {
+     "preferredName": "Zongmin Liu",
+     "normalizedName": "Z. Liu"
+    },
+    {
+     "preferredName": "Weilin Wang",
+     "normalizedName": "W. Wang"
+    },
+    {
+     "preferredName": "Yongnan Zhou",
+     "normalizedName": "Y. Zhou"
+    },
+    {
+     "preferredName": "Xiaoyan Liu",
+     "normalizedName": "X. Liu"
+    },
+    {
+     "preferredName": "Peng Li",
+     "normalizedName": "P. Li"
+    },
+    {
+     "preferredName": "Yibin Rui",
+     "normalizedName": "Y. Rui"
+    }
+   ],
+   "publicationTitle": "2022 14th International Conference on [::Signal::] [::Processing::] Systems (ICSPS)",
+   "publicationYear": "2022",
+   "abstract": "With the progress of technology, phased array [::radar::] is more and more widely used. Compared with traditional mechanical scanning [::radar::], phased array [::radar::] has the advantages of flexible beam pointing, short response time, high data rate, strong anti-jamming ability and high reliability. The [::signal::] [::processing::] system of phased array [::radar::] is the key to its performa...",
+   "doi": "10.1109/ICSPS58776.2022.00106",
+   "documentLink": "/document/10218450/",
+   "pdfLink": "/stamp/stamp.jsp?tp=&arnumber=10218450",
+   "contentType": "IEEE Conferences"
+  },
+  {
+   "articleNumber": "10050662",
+   "articleTitle": "Power Allocation Method for Coexistence of Multicarrier Radar and Jamming System",
+   "authors": [
+    {
+     "preferredName": "Zhuochen Chen",
+     "normalizedName": "Z. Chen"
+    },
+    {
+     "preferredName": "Shengqi Zhu",
+     "normalizedName": "S. Zhu"
+    },
+    {
+     "preferredName": "Yongjun Liu",
+     "normalizedName": "Y. Liu"
+    },
+    {
+     "preferredName": "Ximin Li",
+     "normalizedName": "X. Li"
+    },
+    {
+     "preferredName": "Yanxing Wang",
+     "normalizedName": "Y. Wang"
+    },
+    {
+     "preferredName": "Feilong Liu",
+     "normalizedName": "F. Liu"
+    }
+   ],
+   "publicationTitle": "2022 5th International Conference on Information Communication and [::Signal::] [::Processing::] (ICICSP)",
+   "publicationYear": "2022",
+   "abstract": "To achieve the integration of [::radar::] and jammer, we explore the power allocation problem of multicarrier waveform frequency points to improve the spectral efficiency of the [::radar::] and jammer systems coexisting in the same bandwidth. First, the conditional mutual information of random target impulse response and echo [::signal::], and the output [::signal::]-to-jamming-noise ratio of the ...",
+   "doi": "10.1109/ICICSP55539.2022.10050662",
+   "documentLink": "/document/10050662/",
+   "pdfLink": "/stamp/stamp.jsp?tp=&arnumber=10050662",
+   "contentType": "IEEE Conferences"
+  },
+  {
+   "articleNumber": "9563524",
+   "articleTitle": "Research on Radar Development and Application and Signal Processing Technology",
+   "authors": [
+    {
+     "preferredName": "Changan Zhu",
+     "normalizedName": "C. Zhu"
+    },
+    {
+     "preferredName": "Wenhua Hu",
+     "normalizedName": "W. Hu"
+    },
+    {
+     "preferredName": "Hanshen Zhu",
+     "normalizedName": "H. Zhu"
+    },
+    {
+     "preferredName": "Liming Li",
+     "normalizedName": "L. Li"
+    }
+   ],
+   "publicationTitle": "2021 IEEE International Conference on Electronic Technology, Communication and Information (ICETCI)",
+   "publicationYear": "2021",
+   "abstract": "This With the development of science and technology, the impact of the ionosphere on satellite navigation, radio communication, broadcasting, space exploration and other human activities is more and more significant, the application of [::radar::] to the ionosphere detection technology is also more and more important. In this paper, the main development course of [::radar::] is introduced briefly,...",
+   "doi": "10.1109/ICETCI53161.2021.9563524",
+   "documentLink": "/document/9563524/",
+   "pdfLink": "/stamp/stamp.jsp?tp=&arnumber=9563524",
+   "contentType": "IEEE Conferences"
+  }
+ ]
+}
