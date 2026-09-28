@@ -352,7 +352,7 @@ async def list_tools() -> list[Tool]:
                     "year_start": {"type": "string", "description": "(Optional) Start year e.g. '2020'"},
                     "year_end": {"type": "string", "description": "(Optional) End year e.g. '2025'"},
                     "page": {"type": "integer", "description": "Page number (default 1)", "default": 1},
-                    "sort": {"type": "string", "description": "Sort: relevance, date, citations, downloads"},
+                    "sort": {"type": "string", "description": "Sort (always descending): relevance, date, citations, downloads. CNKI's default is date, newest first"},
                 },
                 "required": ["query"]
             }

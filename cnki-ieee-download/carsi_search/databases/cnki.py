@@ -329,13 +329,20 @@ class CnkiAdapter(BaseAdapter):
         return int(m.group(1)) if m else None
 
     async def _apply_sort(self, sort_id: str) -> str | None:
-        """Click a sort button. Returns error message or None."""
+        """Make sort_id the active sort, newest/highest first. Returns error message or None.
+
+        The sort bar is <li id="FFD|PT|CF|DFR">; the active one has classes "DESC cur" or
+        "ASC cur". Clicking the active one flips its direction, so check before clicking."""
         btn = self.page.locator(f"#{sort_id}").first
         if await btn.count() == 0:
             return f"排序失败：找不到排序按钮 #{sort_id}"
-        if not await self._click_and_wait_refresh(btn):
-            return "排序失败：结果没有刷新"
-        return None
+        for _ in range(2):
+            classes = (await btn.get_attribute("class") or "").split()
+            if "cur" in classes and "DESC" in classes:
+                return None
+            if not await self._click_and_wait_refresh(btn):
+                return "排序失败：结果没有刷新"
+        return f"排序失败：#{sort_id} 没有切换到降序"
 
     async def _go_to_page(self, target: int) -> str | None:
         """Page forward until target: click its page link if shown, else 下一页.
@@ -356,9 +363,8 @@ class CnkiAdapter(BaseAdapter):
         return f"翻页失败：第 {target} 页太远（超过 {self.MAX_PAGE_STEPS} 次翻页）"
 
     async def _finish_results(self, sort: str | None, page_num: int) -> dict:
-        """Apply sort and paging to a loaded result list, then extract it.
-        'relevance' is CNKI's default order, so it needs no click."""
-        if sort and sort != "relevance" and sort in SORT_MAP:
+        """Apply sort and paging to a loaded result list, then extract it."""
+        if sort and sort in SORT_MAP:
             err = await self._apply_sort(SORT_MAP[sort])
             if err:
                 return {"success": False, "error": err}

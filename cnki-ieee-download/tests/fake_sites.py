@@ -136,21 +136,27 @@ def _sd(path, q, st):
 CAPTCHA = ("<div id='tcaptcha_transform_dy' style='position:fixed;top:0;left:0;"
            "width:300px;height:200px'>请完成安全验证</div>")
 HIDDEN_CAPTCHA = "<div id='tcaptcha_transform_dy' style='position:fixed;top:-1000000px'></div>"
-SORTS = ("<div id='sorts'><a id='FFD'>相关度</a><a id='PT'>发表时间</a>"
-         "<a id='CF'>被引</a><a id='DFR'>下载</a></div>")
+# Mirrors kns8s: the active sort <li> has classes "DESC cur" / "ASC cur"; the default is
+# 发表时间 newest first; clicking the active one flips its direction (FFD is DESC-only).
+SORTS = ("<ul id='orderList' class='order'>"
+         "<li id='FFD' data-onlydesc='DESC'>相关度</li><li id='PT' class='DESC cur' data-onlydesc='BOTH'>发表时间</li>"
+         "<li id='CF' data-onlydesc='BOTH'>被引</li><li id='DFR' data-onlydesc='BOTH'>下载</li></ul>")
 
 # Result grid re-rendered via innerHTML after DELAY ms, like CNKI's AJAX brief list.
 _CNKI_GRID = """
 <div id="gridTable"></div>
 <script>
 const TOTAL_PAGES = 10, DELAY = __DELAY__;
-const state = {q: '', page: 1, sort: 'FFD'};
+const state = {q: '', page: 1, sort: 'PT', dir: 'DESC'};
 function render() {
+  document.querySelectorAll('#orderList li').forEach(li => {
+    li.className = li.id === state.sort ? state.dir + ' cur' : '';
+  });
   let rows = '';
   for (let i = 1; i <= 3; i++) {
     const id = 'P' + state.page + 'R' + i;
     rows += '<tr><td class="name"><a class="fz14" target="_blank" href="https://kns.cnki.net/kcms2/article/abstract?v=' + id + '">'
-      + '[' + state.sort + '] ' + state.q + ' ' + id + '</a></td>'
+      + '[' + state.sort + '-' + state.dir + '] ' + state.q + ' ' + id + '</a></td>'
       + '<td class="author"><a class="KnowledgeNetLink">作者' + i + '</a></td><td class="source"><a>测试期刊</a></td>'
       + '<td class="date">2024-01-0' + i + '</td><td class="quote">' + i + '</td><td class="download">' + (10 * i) + '</td></tr>';
   }
@@ -169,8 +175,11 @@ function load(changes) { setTimeout(() => { Object.assign(state, changes); rende
 document.addEventListener('click', e => {
   const pageLink = e.target.closest('[data-curpage]');
   if (pageLink) { load({page: +pageLink.dataset.curpage}); return; }
-  const sortLink = e.target.closest('#sorts a');
-  if (sortLink) load({sort: sortLink.id, page: 1});
+  const sortLink = e.target.closest('#orderList li');
+  if (sortLink) {
+    const flip = sortLink.id === state.sort && state.dir === 'DESC' && sortLink.dataset.onlydesc === 'BOTH';
+    load({sort: sortLink.id, dir: flip ? 'ASC' : 'DESC', page: 1});
+  }
   const btn = e.target.closest('.search-btn');
   if (btn) load({q: document.querySelector('.search-input').value, page: 1});
 });

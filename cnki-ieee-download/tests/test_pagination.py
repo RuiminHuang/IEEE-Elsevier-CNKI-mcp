@@ -48,5 +48,19 @@ async def test_cnki_missing_page_is_an_error(srv, sites):
 
 @pytest.mark.anyio
 async def test_cnki_sort_waits_for_refresh(srv, sites):
+    text = (await srv.call_tool("cnki_search", {"query": "雷达", "sort": "citations"}))[0].text
+    assert "[CF-DESC]" in text, text
+
+
+@pytest.mark.anyio
+async def test_cnki_sort_by_date_stays_newest_first(srv, sites):
+    # CNKI already sorts by date (DESC); clicking it again would flip to oldest first.
     text = (await srv.call_tool("cnki_search", {"query": "雷达", "sort": "date"}))[0].text
-    assert "[PT]" in text, text
+    assert "[PT-DESC]" in text, text
+
+
+@pytest.mark.anyio
+async def test_cnki_sort_by_relevance_is_applied(srv, sites):
+    # Relevance is not CNKI's default, so it must be clicked.
+    text = (await srv.call_tool("cnki_search", {"query": "雷达", "sort": "relevance"}))[0].text
+    assert "[FFD-DESC]" in text, text
