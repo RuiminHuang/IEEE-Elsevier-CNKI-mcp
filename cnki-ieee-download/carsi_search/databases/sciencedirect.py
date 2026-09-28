@@ -4,7 +4,7 @@ ScienceDirect (Elsevier) database adapter.
 
 import asyncio
 from urllib.parse import quote
-from .base import BaseAdapter
+from .base import BaseAdapter, year_range
 
 
 class ScienceDirectAdapter(BaseAdapter):
@@ -14,13 +14,15 @@ class ScienceDirectAdapter(BaseAdapter):
     PAGE_SIZE = 25
 
     @classmethod
-    def build_search_url(cls, query: str, page: int = 1) -> str:
+    def build_search_url(cls, query: str, page: int = 1, year_start=None, year_end=None) -> str:
         offset = (int(page) - 1) * cls.PAGE_SIZE
         url = f"https://www.sciencedirect.com/search?qs={quote(query)}&show={cls.PAGE_SIZE}"
-        return url + (f"&offset={offset}" if offset else "")
+        years = year_range(year_start, year_end)
+        return url + (f"&offset={offset}" if offset else "") + (f"&date={years[0]}-{years[1]}" if years else "")
 
     async def search(self, query: str, **kwargs) -> dict:
-        search_url = self.build_search_url(query, int(kwargs.get("page") or 1))
+        search_url = self.build_search_url(query, int(kwargs.get("page") or 1),
+                                           kwargs.get("year_start"), kwargs.get("year_end"))
         await self._navigate(search_url)
         await asyncio.sleep(4)
 

@@ -32,6 +32,7 @@ from mcp.types import Tool, TextContent
 
 from carsi_search.engine import CarsiAuth, log
 from carsi_search.registry import list_dbs, get_db, get_adapter
+from carsi_search.databases.base import year_range
 from carsi_search.databases.cnki import CnkiAdapter
 
 from playwright.async_api import Page as PwPage
@@ -263,12 +264,15 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="ieee_search",
-            description="Search IEEE Xplore. No login needed. Supports paging via 'page'.",
+            description="Search IEEE Xplore. No login needed. Supports paging via 'page'. "
+                        "Optional year_start/year_end filter by publication year.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search keywords"},
                     "page": {"type": "integer", "description": "Page number", "default": 1},
+                    "year_start": {"type": "string", "description": "(Optional) Start year e.g. '2020'"},
+                    "year_end": {"type": "string", "description": "(Optional) End year e.g. '2025'"},
                 },
                 "required": ["query"]
             }
@@ -304,12 +308,15 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="sciencedirect_search",
-            description="Search ScienceDirect. No login needed. Supports paging via 'page'.",
+            description="Search ScienceDirect. No login needed. Supports paging via 'page'. "
+                        "Optional year_start/year_end filter by publication year.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search keywords"},
                     "page": {"type": "integer", "description": "Page number", "default": 1},
+                    "year_start": {"type": "string", "description": "(Optional) Start year e.g. '2020'"},
+                    "year_end": {"type": "string", "description": "(Optional) End year e.g. '2025'"},
                 },
                 "required": ["query"]
             }
@@ -466,7 +473,8 @@ async def handle_search(db: str, args: dict) -> list[TextContent]:
         return [TextContent(type="text", text=err or "CDP 连接失败")]
 
     adapter = await get_adapter(db, page)
-    result = await adapter.search(args["query"], page=args.get("page", 1))
+    result = await adapter.search(args["query"], page=args.get("page", 1),
+                                  year_start=args.get("year_start"), year_end=args.get("year_end"))
 
     if not result.get("success"):
         err = result.get("error", "")
@@ -481,7 +489,9 @@ async def handle_search(db: str, args: dict) -> list[TextContent]:
     total = result.get("total", "")
     total_str = f" (total: {total})" if total else ""
     page_num = args.get("page", 1)
-    text = f"Page {page_num}, {len(papers)} papers{total_str}:\n\n"
+    years = year_range(args.get("year_start"), args.get("year_end"))
+    year_str = f" [年份={years[0]}-{years[1]}]" if years else ""
+    text = f"Page {page_num}, {len(papers)} papers{total_str}{year_str}:\n\n"
     for i, p in enumerate(papers, 1):
         text += f"{i}. **{p.get('title', 'No title')}**\n"
         if p.get('authors'): text += f"   Authors: {p['authors']}\n"

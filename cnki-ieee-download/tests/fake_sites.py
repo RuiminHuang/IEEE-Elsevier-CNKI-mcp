@@ -184,10 +184,15 @@ def _sd(path, q, st):
         if q.get("qs") == "__snapshot__":
             return 200, "text/html", _html(header + SD_SNAPSHOT)
         offset = int(q.get("offset", "0"))
+        span = re.match(r"(\d{4})-(\d{4})$", q.get("date", ""))
         items = []
         for i in range(1, 11):
             pii = f"S{offset + i:010d}"
-            date = "5 May 1998" if i == 2 else "1 March 2021"
+            if span:   # SD's "date=2020-2022" filter
+                lo, hi = int(span.group(1)), int(span.group(2))
+                date = f"1 March {lo + (i - 1) % (hi - lo + 1)}"
+            else:
+                date = "5 May 1998" if i == 2 else "1 March 2021"
             has_pdf = i % 2 == 1 or i > 6          # papers 2, 4, 6 have no PDF link
             items.append(_sd_item(pii, f"SD O{offset} Paper {i}", [f"Alice {i}", f"Bob {i}"],
                                   "Journal X", date, has_pdf))

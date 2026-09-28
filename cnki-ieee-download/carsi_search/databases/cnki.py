@@ -54,8 +54,7 @@ CNKI 的反爬系统会检测 Playwright 浏览器（无论 headless 还是有�
 import asyncio
 import re
 import time
-from datetime import datetime
-from .base import BaseAdapter
+from .base import BaseAdapter, year_range
 
 
 # CNKI 搜索结果页的排序按钮 ID 映射
@@ -73,10 +72,6 @@ def _quoted(value) -> str:
     return f"'{text.strip()}'"
 
 
-def _year(value) -> str:
-    return re.sub(r"\D", "", str(value or ""))[:4]
-
-
 def build_pro_query(query, author=None, journal=None, year_start=None, year_end=None) -> str:
     """CNKI 专业检索 expression, e.g. SU='雷达' AND AU='张三' AND YE BETWEEN ('2020','2025')."""
     parts = [f"SU={_quoted(query)}"]
@@ -84,9 +79,9 @@ def build_pro_query(query, author=None, journal=None, year_start=None, year_end=
         parts.append(f"AU={_quoted(author)}")
     if journal:
         parts.append(f"LY={_quoted(journal)}")
-    start, end = _year(year_start), _year(year_end)
-    if start or end:
-        parts.append(f"YE BETWEEN ('{start or '1900'}','{end or datetime.now().year}')")
+    years = year_range(year_start, year_end)
+    if years:
+        parts.append(f"YE BETWEEN ('{years[0]}','{years[1]}')")
     return " AND ".join(parts)
 
 
