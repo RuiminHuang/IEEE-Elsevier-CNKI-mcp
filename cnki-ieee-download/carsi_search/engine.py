@@ -67,6 +67,10 @@ def _find_browser() -> str | None:
     return None
 
 
+def _cdp_port() -> str:
+    return CDP_URL.split(":")[-1].rstrip("/")
+
+
 def _is_cdp_available() -> bool:
     """Quick check if CDP port is already listening."""
     import urllib.request
@@ -104,8 +108,9 @@ class CarsiAuth:
                     await self._playwright.stop()
                     self._playwright = None
                     raise RuntimeError(
-                        f"无法连接浏览器 CDP ({CDP_URL})。"
-                        f"请手动启动 Chrome/Edge: msedge --remote-debugging-port=9222"
+                        f"无法连接浏览器 CDP ({CDP_URL})。请手动启动 Chrome/Edge，例如：\n"
+                        f'msedge --remote-debugging-port={_cdp_port()} --user-data-dir="{_CDP_PROFILE}"\n'
+                        "（新版 Chrome/Edge 必须同时指定 --user-data-dir，否则调试端口不会打开）"
                     )
 
         if not self.browser:
@@ -128,7 +133,7 @@ class CarsiAuth:
         log.info(f"[CDP] 自动启动 {browser_name}...")
         _CDP_PROFILE.mkdir(parents=True, exist_ok=True)
 
-        port = CDP_URL.split(":")[-1].rstrip("/")
+        port = _cdp_port()
         cmd = [
             browser_path,
             f"--remote-debugging-port={port}",

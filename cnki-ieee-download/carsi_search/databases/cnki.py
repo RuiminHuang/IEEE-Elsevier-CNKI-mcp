@@ -53,6 +53,7 @@ CNKI 的反爬系统会检测 Playwright 浏览器（无论 headless 还是有�
 
 import asyncio
 import re
+import time
 from datetime import datetime
 from .base import BaseAdapter
 
@@ -93,6 +94,7 @@ class CnkiAdapter(BaseAdapter):
     name = "cnki"
     home_url = "https://kns.cnki.net/kns8s/search"
     pro_search_url = "https://kns.cnki.net/kns8s/AdvSearch?type=expert&classid=WD0FTY92&rlang=CHINESE"
+    SEARCH_BOX_TIMEOUT = 20   # seconds
 
     # ── 登录 ──────────────────────────────────────────────────────
     # CNKI 登录流程: kns.cnki.net → 机构登录 → 校外访问 → fsso.cnki.net → CARSI IdP
@@ -193,7 +195,8 @@ class CnkiAdapter(BaseAdapter):
         如果提供了高级筛选参数（author/journal/year_start/year_end），
         自动切换到高级搜索页面。
 
-        注意: 搜索输入框的 timeout 设为 90 秒，因为首次可能需要手动过验证码。
+        注意: 最多等 SEARCH_BOX_TIMEOUT 秒搜索框出现；出现验证码时立即返回 "captcha"，
+        由 server 提示用户手动完成后重试。
         """
         page_num = kwargs.get("page", 1)
         sort = kwargs.get("sort")
@@ -212,14 +215,16 @@ class CnkiAdapter(BaseAdapter):
 
         await self._navigate(self.home_url)
 
-        # 等搜索框出现（可能需要先过验证码）
-        try:
-            await self.page.wait_for_selector('input.search-input', timeout=90000)
-        except Exception:
-            return {"success": False, "error": "timeout — CNKI 可能显示了验证码，请在浏览器中完成后重试"}
-
+        # 等搜索框出现；验证码挡住页面时立即返回，交给用户处理
+        deadline = time.monotonic() + self.SEARCH_BOX_TIMEOUT
+        while not await self.page.query_selector('input.search-input'):
+            if await self._check_captcha():
+                return {"success": False, "error": "captcha"}
+            if time.monotonic() > deadline:
+                return {"success": False, "error": "timeout — 搜索框没有出现，CNKI 可能显示了验证页面"}
+            await asyncio.sleep(0.5)
         if await self._check_captcha():
-            return {"success": False, "error": "captcha — 请在浏览器中手动完成滑块验证后重试"}
+            return {"success": False, "error": "captcha"}
 
         await self.page.fill('input.search-input', query)
         await self.page.click('input.search-btn')

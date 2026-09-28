@@ -563,6 +563,8 @@ def _ieee_pdf_url(url: str) -> str:
     return url
 
 
+CHALLENGE_GRACE_SECONDS = 15   # how long a download waits for Cloudflare before asking the user
+
 _FETCH_PDF_JS = """
     async (targetUrl) => {
         try {
@@ -613,20 +615,19 @@ async def _sd_navigate_and_fetch(page, url: str) -> str | None:
         if "sciencedirectassets" in page.url:
             break
 
-    # Check for Cloudflare bot challenge — wait for user to complete it
-    for attempt in range(60):
+    # Give Cloudflare a short grace period; if it still blocks, hand over to the user
+    # (ACTION_REQUIRED) instead of holding the tool call for minutes.
+    deadline = time.monotonic() + CHALLENGE_GRACE_SECONDS
+    while True:
         try:
             page_text = await page.evaluate("() => document.body?.innerText?.slice(0, 500) || ''")
         except Exception:
-            # Context destroyed (Cloudflare verification caused navigation)
-            await asyncio.sleep(2)
-            continue
-
+            page_text = "just a moment"   # context destroyed mid-challenge; keep waiting
         if "robot" not in page_text.lower() and "just a moment" not in page_text.lower():
             break
-        await asyncio.sleep(3)
-    else:
-        return None
+        if time.monotonic() > deadline:
+            return None
+        await asyncio.sleep(1)
 
     # Wait for page to stabilize after Cloudflare pass
     await asyncio.sleep(2)
