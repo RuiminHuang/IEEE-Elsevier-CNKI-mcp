@@ -90,12 +90,11 @@ def anyio_backend():
 
 @pytest.fixture
 def cdp_browser(browser_exe, tmp_path, monkeypatch):
-    """Point engine at a fresh headless browser; isolate profile, state file and cwd.
+    """Point engine at a fresh headless browser; isolate profile and cwd.
     If CarsiAuth needs to (re)launch the browser, it relaunches this headless one."""
     b = CdpBrowser(browser_exe, tmp_path)
     monkeypatch.setattr(engine, "CDP_URL", b.url)
     monkeypatch.setattr(engine, "_CDP_PROFILE", tmp_path / "carsi_profile")
-    monkeypatch.setattr(engine.CarsiAuth, "STATE_FILE", tmp_path / "state.json")
     monkeypatch.chdir(tmp_path)
 
     async def launch(self):

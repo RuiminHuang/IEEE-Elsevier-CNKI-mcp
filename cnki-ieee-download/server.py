@@ -3,7 +3,7 @@
 学术论文搜索下载 MCP Server — IEEE / ScienceDirect / CNKI 统一入口。
 
 通过 CDP 连接用户真实 Chrome/Edge，自动启动浏览器（如未运行）。
-用户手动登录一次，cookie 自动保存恢复。
+用户手动登录一次，登录状态保存在专用浏览器配置（~/.carsi_chrome_profile）里。
 
 MCP tools (格式: {数据库}_{操作}):
   ieee_login / ieee_search / ieee_detail / ieee_download
@@ -223,15 +223,6 @@ async def _ensure_logged_in(db: str) -> tuple[PwPage | None, list[TextContent] |
     return None, _need_login_response(db)
 
 
-async def _save_cookies():
-    """Save cookies if auth is active."""
-    if _auth:
-        try:
-            await _auth.save_state()
-        except Exception as e:
-            log.debug(f"Cookie save error: {e}")
-
-
 # ══════════════════════════════════════════════════════════════════════
 # Tool Definitions
 # ══════════════════════════════════════════════════════════════════════
@@ -442,11 +433,10 @@ async def handle_login(db: str) -> list[TextContent]:
     page, err = await _ensure_logged_in(db)
     if err:
         return err
-    await _save_cookies()
     return [TextContent(type="text",
         text=f"✅ 已连接 {get_db(db)['label']}。\n"
              f"URL: {page.url[:120]}\n"
-             f"Cookie 已保存，下次启动自动恢复。")]
+             f"登录状态保存在专用浏览器配置（~/.carsi_chrome_profile）中，下次自动沿用。")]
 
 
 async def handle_search(db: str, args: dict) -> list[TextContent]:
@@ -485,8 +475,6 @@ async def handle_search(db: str, args: dict) -> list[TextContent]:
         if p.get('url'): text += f"   URL: {p['url']}\n"
         text += "\n"
     text += f"-> Use {db}_detail(url=URL) for full metadata"
-
-    await _save_cookies()
     return [TextContent(type="text", text=text)]
 
 
@@ -527,8 +515,6 @@ async def handle_detail(db: str, args: dict) -> list[TextContent]:
         hint_title = title.replace('"', "'")
         text += f"**Download**: use {db}_download(url=\"{result['pdfUrl']}\", title=\"{hint_title}\")\n"
     if result.get("citation"): text += f"\n**Citation**\n{result['citation']}\n"
-
-    await _save_cookies()
     return [TextContent(type="text", text=text or "No details extracted.")]
 
 
@@ -772,7 +758,6 @@ async def handle_download(db: str, args: dict) -> list[TextContent]:
                  f"已在浏览器中打开。\nFirst bytes: {snippet[:100]}")]
 
     save_path = _save_pdf(pdf_data, title)
-    await _save_cookies()
     return [TextContent(type="text",
         text=f"Downloaded PDF ({len(pdf_data)} bytes)\nSaved: {save_path}")]
 
@@ -809,7 +794,6 @@ async def handle_logout() -> list[TextContent]:
             except Exception as e:
                 log.debug(f"Closing tool tab: {e}")
     if _auth:
-        await _auth.clear_state()
         try:
             await _auth.stop()
         except Exception as e:
@@ -959,7 +943,6 @@ async def handle_cnki_download(args: dict) -> list[TextContent]:
     ext = ".pdf" if head.startswith(b"%PDF") else (Path(suggested).suffix.lower() or ".caj")
     final = _unique_path(save_dir, title or Path(suggested).stem, ext)
     path.rename(final)
-    await _save_cookies()
     kind = ext.lstrip(".").upper()
     return [TextContent(type="text",
         text=f"CNKI {kind} 下载成功：{final.name}\n大小: {final.stat().st_size} bytes\n保存: {final}")]
