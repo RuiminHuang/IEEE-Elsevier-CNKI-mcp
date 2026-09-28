@@ -66,6 +66,29 @@ SORT_MAP = {
 }
 
 
+def _quoted(value) -> str:
+    """CNKI expert-search value in single quotes; embedded quotes can't be escaped, so drop them."""
+    text = str(value).replace("'", "").replace("‘", "").replace("’", "")
+    return f"'{text.strip()}'"
+
+
+def _year(value) -> str:
+    return re.sub(r"\D", "", str(value or ""))[:4]
+
+
+def build_pro_query(query, author=None, journal=None, year_start=None, year_end=None) -> str:
+    """CNKI 专业检索 expression, e.g. SU='雷达' AND AU='张三' AND YE BETWEEN ('2020','2025')."""
+    parts = [f"SU={_quoted(query)}"]
+    if author:
+        parts.append(f"AU={_quoted(author)}")
+    if journal:
+        parts.append(f"LY={_quoted(journal)}")
+    start, end = _year(year_start), _year(year_end)
+    if start or end:
+        parts.append(f"YE BETWEEN ('{start or '1900'}','{end or datetime.now().year}')")
+    return " AND ".join(parts)
+
+
 class CnkiAdapter(BaseAdapter):
     name = "cnki"
     home_url = "https://kns.cnki.net/kns8s/search"
@@ -222,20 +245,10 @@ class CnkiAdapter(BaseAdapter):
         """专业检索 — 使用 CNKI 专业检索页面的文本查询语法。
 
         字段代码: SU=主题, AU=作者, LY=文献来源, KY=关键词, TI=篇名
-        多条件用 AND 连接，例如: SU=MIMO雷达 AND AU=张三 AND LY=信号处理
+        多条件用 AND 连接，值加单引号，例如: SU='MIMO雷达' AND AU='张三' AND LY='信号处理'
+        年份直接写在查询串里: YE BETWEEN ('2022','2025')
         """
-        # 构建专业检索查询字符串
-        # CNKI 专业检索支持在查询串中直接指定年份: YE BETWEEN ('2022','2025')
-        parts = [f"SU={query}"]
-        if author:
-            parts.append(f"AU={author}")
-        if journal:
-            parts.append(f"LY={journal}")
-        if year_start or year_end:
-            start = year_start or "1900"
-            end = year_end or str(datetime.now().year)
-            parts.append(f"YE BETWEEN ('{start}','{end}')")
-        pro_query = " AND ".join(parts)
+        pro_query = build_pro_query(query, author, journal, year_start, year_end)
 
         await self._navigate(self.pro_search_url)
 
