@@ -479,6 +479,7 @@ async def handle_search(db: str, args: dict) -> list[TextContent]:
         if p.get('year'): text += f"   Year: {p['year']}\n"
         if p.get('source'): text += f"   Source: {p['source']}\n"
         if p.get('abstract'): text += f"   Abstract: {p['abstract'][:200]}...\n"
+        if p.get('hasPdf') is not None: text += f"   PDF: {'可下载' if p['hasPdf'] else '无下载链接'}\n"
         if p.get('url'): text += f"   URL: {p['url']}\n"
         text += "\n"
     text += f"-> Use {db}_detail(url=URL) for full metadata"

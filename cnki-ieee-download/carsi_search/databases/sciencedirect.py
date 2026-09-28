@@ -42,84 +42,31 @@ class ScienceDirectAdapter(BaseAdapter):
                 return captcha_result
             return {"success": False, "error": "timeout — 搜索结果未加载，可能页面结构变化"}
 
-        result = await self.page.evaluate("""
+        # Every result in page order; hasPdf marks the ones with a "View PDF" link.
+        result = await self.page.evaluate(r"""
             () => {
-                // 从 "View PDF" 链接提取论文（这些是有 PDF 的）
-                const pdfLinks = document.querySelectorAll('a.download-link');
+                const norm = s => (s || '').replace(/\s+/g, ' ').trim();
                 const papers = [];
-                const seenPii = new Set();
-
-                for (const pdfA of pdfLinks) {
-                    const m = pdfA.href.match(/\\/pii\\/([A-Z0-9]+)/);
-                    if (!m) continue;
-                    const pii = m[1];
-                    if (seenPii.has(pii)) continue;
-                    seenPii.add(pii);
-
-                    // 找到包含标题链接和 PDF 链接的共同祖先
-                    let container = pdfA;
-                    for (let i = 0; i < 10 && container; i++) {
-                        const t = container.querySelector('a[href*="/science/article/pii/"]');
-                        if (t && t.textContent.trim().length > 10) break;
-                        container = container.parentElement;
-                    }
-
-                    // 从容器中找标题链接
-                    const titleA = container?.querySelector('a[href*="/science/article/pii/"]');
-                    const title = (titleA?.textContent || '').replace(/\\s+/g, ' ').trim();
-                    const url = titleA?.href || ('https://www.sciencedirect.com/science/article/pii/' + pii);
-
-                    if (!title || title.length < 5) continue;
-
-                    const authors = container?.querySelector(
-                        '[class*="author"], [data-test="author"], .search-result-authors'
-                    )?.textContent?.replace(/\\s+/g, ' ')?.trim() || '';
-
-                    const yearMatch = container?.textContent?.match(/\\b(20\\d{2})\\b/);
-                    const year = yearMatch ? yearMatch[1] : '';
-
-                    const absEl = container?.querySelector(
-                        '[class*="abstract"], [class*="snippet"], .search-result-snippet'
-                    );
-                    const abstract = (absEl?.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300);
-
-                    papers.push({ title, url, pii, authors, year, abstract, pdfUrl: pdfA.href });
+                const seen = new Set();
+                for (const a of document.querySelectorAll('a[href*="/science/article/pii/"]')) {
+                    const m = a.href.match(/\/pii\/([A-Z0-9]+)/);
+                    if (!m || seen.has(m[1]) || /\/pdf/i.test(a.pathname)) continue;   // skip "View PDF" links
+                    const title = norm(a.textContent);
+                    if (title.length < 5) continue;
+                    seen.add(m[1]);
+                    const item = a.closest('li, article, [class*="result-item"], [class*="ResultItem"]') || a.parentElement;
+                    const pdfA = item.querySelector('a.download-link, a[href*="/pdfft"], a[href*="pdf.sciencedirectassets"]');
+                    papers.push({
+                        title, url: a.href, pii: m[1],
+                        authors: norm(item.querySelector('[class*="author" i]')?.textContent),
+                        year: (item.textContent.match(/\b(19|20)\d{2}\b/) || [''])[0],
+                        abstract: norm(item.querySelector('[class*="abstract"], [class*="snippet"]')?.textContent).slice(0, 300),
+                        pdfUrl: pdfA ? pdfA.href : '',
+                        hasPdf: !!pdfA,
+                    });
                 }
-
-                // 如果 "View PDF" 链接提取的论文不够，补充没有 PDF 链接的论文
-                if (papers.length < 5) {
-                    const allLinks = document.querySelectorAll('a[href*="/science/article/pii/"]');
-                    for (const a of allLinks) {
-                        const href = a.href;
-                        const m2 = href.match(/\\/pii\\/([A-Z0-9]+)/);
-                        if (!m2) continue;
-                        const pii2 = m2[1];
-                        if (seenPii.has(pii2)) continue;
-                        seenPii.add(pii2);
-
-                        const title2 = (a.textContent || '').replace(/\\s+/g, ' ').trim();
-                        if (!title2 || title2.length < 5) continue;
-
-                        const container2 = a.closest('li, div, article, [class*="result"]')
-                            || a.parentElement?.parentElement;
-                        const authors2 = container2?.querySelector('[class*="author"]')?.textContent?.replace(/\\s+/g, ' ')?.trim() || '';
-                        const yearMatch2 = container2?.textContent?.match(/\\b(20\\d{2})\\b/);
-
-                        papers.push({
-                            title: title2, url: href, pii: pii2,
-                            authors: authors2,
-                            year: yearMatch2 ? yearMatch2[1] : '',
-                            abstract: '',
-                            pdfUrl: href + '/pdfft?isDTMRedir=true&download=true'
-                        });
-                    }
-                }
-
-                const body = document.body?.innerText || '';
-                const totalMatch = body.match(/([\\d,]+)\\s*[Rr]esult/);
-                const total = totalMatch ? totalMatch[1] : String(papers.length);
-
-                return { success: true, total, papers };
+                const totalMatch = (document.body?.innerText || '').match(/([\d,]+)\s*[Rr]esult/);
+                return { success: true, total: totalMatch ? totalMatch[1] : String(papers.length), papers };
             }
         """)
 
