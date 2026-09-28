@@ -11,11 +11,16 @@ class IeeeAdapter(BaseAdapter):
     name = "ieee"
     home_url = "https://ieeexplore.ieee.org/"
 
-    async def search(self, query: str, **kwargs) -> dict:
-        search_url = (
+    @staticmethod
+    def build_search_url(query: str, page: int = 1) -> str:
+        return (
             "https://ieeexplore.ieee.org/search/searchresult.jsp?"
-            f"newsearch=true&queryText={quote(query)}"
+            f"newsearch=true&queryText={quote(query)}&pageNumber={int(page)}"
         )
+
+    async def search(self, query: str, **kwargs) -> dict:
+        page_num = int(kwargs.get("page") or 1)
+        search_url = self.build_search_url(query, page_num)
         await self._navigate(search_url)
         await asyncio.sleep(4)
 
@@ -54,11 +59,14 @@ class IeeeAdapter(BaseAdapter):
                 const body = document.body?.innerText || '';
                 const totalMatch = body.match(/([\\d,]+)\\s*[Rr]esults/);
                 const total = totalMatch ? totalMatch[1] : '';
+                const rangeMatch = body.match(/Showing\\s+([\\d,]+)\\s*-\\s*([\\d,]+)\\s+of/i);
 
-                return { success: true, total, papers };
+                return { success: true, total, papers, rangeStart: rangeMatch ? rangeMatch[1] : '' };
             }
         """)
 
+        if page_num > 1 and result.get("rangeStart") == "1":
+            return {"success": False, "error": f"翻页未生效：请求第 {page_num} 页，页面仍显示第 1 页"}
         return result
 
     async def detail(self, url: str, **kwargs) -> dict:

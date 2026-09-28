@@ -52,6 +52,7 @@ CNKI 的反爬系统会检测 Playwright 浏览器（无论 headless 还是有�
 """
 
 import asyncio
+import re
 from datetime import datetime
 from .base import BaseAdapter
 
@@ -213,13 +214,7 @@ class CnkiAdapter(BaseAdapter):
         if await self._check_captcha():
             return {"success": False, "error": "captcha"}
 
-        if sort and sort in SORT_MAP:
-            await self._apply_sort(SORT_MAP[sort])
-
-        if page_num > 1:
-            await self._go_to_page(page_num)
-
-        return await self._extract_results()
+        return await self._finish_results(sort, page_num)
 
     async def _advanced_search(self, query, author=None, journal=None,
                                year_start=None, year_end=None, sort=None,
@@ -287,38 +282,73 @@ class CnkiAdapter(BaseAdapter):
         if await self._check_captcha():
             return {"success": False, "error": "captcha"}
 
-        if sort and sort in SORT_MAP:
-            await self._apply_sort(SORT_MAP[sort])
+        return await self._finish_results(sort, page_num)
 
+    # CNKI replaces result rows via AJAX. Tag the current rows first; waiting for an
+    # untagged row can then never be satisfied by the old results.
+    _MARK_ROWS_JS = """() => document.querySelectorAll('.result-table-list tbody tr')
+        .forEach(r => r.dataset.carsiStale = '1')"""
+    _ROWS_REFRESHED_JS = """() => {
+        const r = document.querySelector('.result-table-list tbody tr');
+        return !!r && r.dataset.carsiStale !== '1';
+    }"""
+    MAX_PAGE_STEPS = 30
+
+    async def _click_and_wait_refresh(self, locator) -> bool:
+        """Click locator and wait until the result rows are re-rendered."""
+        await self.page.evaluate(self._MARK_ROWS_JS)
+        await locator.click()
+        try:
+            await self.page.wait_for_function(self._ROWS_REFRESHED_JS, timeout=15000)
+            return True
+        except Exception:
+            return False
+
+    async def _current_page(self) -> int | None:
+        """Current page from the pager's '3/300' marker."""
+        text = await self.page.evaluate("() => document.querySelector('.countPageMark')?.innerText || ''")
+        m = re.match(r"\s*(\d+)\s*/", text)
+        return int(m.group(1)) if m else None
+
+    async def _apply_sort(self, sort_id: str) -> str | None:
+        """Click a sort button. Returns error message or None."""
+        btn = self.page.locator(f"#{sort_id}").first
+        if await btn.count() == 0:
+            return f"排序失败：找不到排序按钮 #{sort_id}"
+        if not await self._click_and_wait_refresh(btn):
+            return "排序失败：结果没有刷新"
+        return None
+
+    async def _go_to_page(self, target: int) -> str | None:
+        """Page forward until target: click its page link if shown, else 下一页.
+        Returns error message or None."""
+        for _ in range(self.MAX_PAGE_STEPS):
+            current = await self._current_page()
+            if current == target:
+                return None
+            if current is None or current > target:
+                return f"翻页失败：无法确定当前页码（当前 {current}，目标 {target}）"
+            link = self.page.locator(f'a[data-curpage="{target}"]').first
+            if await link.count() == 0:
+                link = self.page.locator('#PageNext, #Page_next_top, a:has-text("下一页")').first
+                if await link.count() == 0:
+                    return f"翻页失败：没有第 {target} 页"
+            if not await self._click_and_wait_refresh(link):
+                return f"翻页失败：翻到第 {target} 页时结果没有刷新"
+        return f"翻页失败：第 {target} 页太远（超过 {self.MAX_PAGE_STEPS} 次翻页）"
+
+    async def _finish_results(self, sort: str | None, page_num: int) -> dict:
+        """Apply sort and paging to a loaded result list, then extract it.
+        'relevance' is CNKI's default order, so it needs no click."""
+        if sort and sort != "relevance" and sort in SORT_MAP:
+            err = await self._apply_sort(SORT_MAP[sort])
+            if err:
+                return {"success": False, "error": err}
         if page_num > 1:
-            await self._go_to_page(page_num)
-
+            err = await self._go_to_page(page_num)
+            if err:
+                return {"success": False, "error": err}
         return await self._extract_results()
-
-    async def _apply_sort(self, sort_id: str):
-        """点击排序按钮并等待结果刷新。"""
-        try:
-            await self.page.click(f'a#{sort_id}')
-            await self.page.wait_for_function(
-                "document.body.innerText.includes('条结果')", timeout=15000
-            )
-            await asyncio.sleep(0.5)
-        except Exception:
-            pass
-
-    async def _go_to_page(self, page_num: int):
-        """跳转到指定页码。CNKI 的页码输入框是 input.countPageMark。"""
-        try:
-            page_input = await self.page.query_selector('input.countPageMark')
-            if page_input:
-                await page_input.fill(str(page_num))
-                await page_input.press('Enter')
-                await self.page.wait_for_function(
-                    "document.body.innerText.includes('条结果')", timeout=15000
-                )
-                await asyncio.sleep(0.5)
-        except Exception:
-            pass
 
     async def _extract_results(self) -> dict:
         """从搜索结果页提取论文列表。

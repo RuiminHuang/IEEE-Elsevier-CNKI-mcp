@@ -11,11 +11,16 @@ class ScienceDirectAdapter(BaseAdapter):
     name = "sciencedirect"
     home_url = "https://www.sciencedirect.com/"
 
+    PAGE_SIZE = 25
+
+    @classmethod
+    def build_search_url(cls, query: str, page: int = 1) -> str:
+        offset = (int(page) - 1) * cls.PAGE_SIZE
+        url = f"https://www.sciencedirect.com/search?qs={quote(query)}&show={cls.PAGE_SIZE}"
+        return url + (f"&offset={offset}" if offset else "")
+
     async def search(self, query: str, **kwargs) -> dict:
-        search_url = (
-            "https://www.sciencedirect.com/search?"
-            f"qs={quote(query)}&show=25"
-        )
+        search_url = self.build_search_url(query, int(kwargs.get("page") or 1))
         await self._navigate(search_url)
         await asyncio.sleep(4)
 
