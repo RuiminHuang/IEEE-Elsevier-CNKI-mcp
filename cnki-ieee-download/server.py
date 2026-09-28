@@ -72,15 +72,6 @@ def _page_alive(page) -> bool:
     return page is not None and not page.is_closed()
 
 
-def _find_db_page(ctx, db: str):
-    """Return an open tab already showing db's site (not a login page), or None."""
-    domain = _db_domain(db)
-    for p in ctx.pages:
-        if not p.is_closed() and urlparse(p.url).netloc == domain and not _is_login_url(p.url):
-            return p
-    return None
-
-
 async def _ensure_connection(stale: CarsiAuth | None = None) -> str | None:
     """Ensure a live CDP connection. `stale` is a connection the caller found broken
     even though it still looked alive. Returns error message or None."""
@@ -117,7 +108,8 @@ async def _ensure_page(db: str):
         page = _pages.get(db)
         if not _page_alive(page):
             try:
-                page = _find_db_page(_auth.context, db) or await _auth.context.new_page()
+                # Only ever use a tab this tool opened; never take over one the user is reading.
+                page = await _auth.context.new_page()
             except Exception as e:
                 log.info(f"[CDP] new_page failed, reconnecting: {e}")
                 stale = _auth
@@ -394,7 +386,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="logout",
-            description="Disconnect CDP connection. Does NOT close Chrome browser.",
+            description="Disconnect and close the tabs this tool opened. The browser and your logins stay.",
             inputSchema={"type": "object", "properties": {}, "required": []}
         ),
     ]
@@ -810,6 +802,12 @@ async def handle_status() -> list[TextContent]:
 
 async def handle_logout() -> list[TextContent]:
     global _auth, _pages
+    for pg in _pages.values():
+        if _page_alive(pg):
+            try:
+                await pg.close()
+            except Exception as e:
+                log.debug(f"Closing tool tab: {e}")
     if _auth:
         await _auth.clear_state()
         try:
@@ -818,7 +816,7 @@ async def handle_logout() -> list[TextContent]:
             log.debug(f"Logout cleanup: {e}")
     _auth = None
     _pages = {}
-    return [TextContent(type="text", text="已断开 CDP 连接。浏览器保持打开。")]
+    return [TextContent(type="text", text="已断开 CDP 连接并关闭了工具打开的标签页。浏览器和登录状态保持不变。")]
 
 
 # ══════════════════════════════════════════════════════════════════════
