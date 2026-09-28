@@ -503,7 +503,8 @@ async def handle_detail(db: str, args: dict) -> list[TextContent]:
             return _need_action_response(db, "详情页显示了验证页面。")
         return [TextContent(type="text", text=f"Detail failed: {err}")]
 
-    text = ""
+    title = result.get("title", "")
+    text = f"**{title}**\n\n" if title else ""
     if result.get("abstract"): text += f"**Abstract**\n{result['abstract']}\n\n"
     if result.get("authors"):
         authors = result["authors"] if isinstance(result["authors"], list) else [result["authors"]]
@@ -521,7 +522,8 @@ async def handle_detail(db: str, args: dict) -> list[TextContent]:
     if result.get("pubDate"): text += f"**Published**: {result['pubDate']}\n"
     if result.get("pdfUrl"):
         text += f"**PDF**: {result['pdfUrl']}\n"
-        text += f"**Download**: use {db}_download(url=\"{result['pdfUrl']}\")\n"
+        hint_title = title.replace('"', "'")
+        text += f"**Download**: use {db}_download(url=\"{result['pdfUrl']}\", title=\"{hint_title}\")\n"
     if result.get("citation"): text += f"\n**Citation**\n{result['citation']}\n"
 
     await _save_cookies()
@@ -643,15 +645,10 @@ async def _sd_navigate_and_fetch(page, url: str) -> str | None:
 
 
 def _save_pdf(pdf_data: bytes, title: str) -> Path:
-    """Save PDF bytes to downloads directory."""
+    """Save PDF bytes to downloads directory without overwriting existing files."""
     downloads_dir = Path(os.getcwd()) / "downloads"
     downloads_dir.mkdir(exist_ok=True)
-    if title:
-        safe_title = re.sub(r'[<>:"/\\|?*]', '', title).strip()[:80]
-        filename = f"{safe_title}.pdf"
-    else:
-        filename = f"paper_{int(time.time())}.pdf"
-    save_path = downloads_dir / filename
+    save_path = _unique_path(downloads_dir, title, ".pdf")
     save_path.write_bytes(pdf_data)
     return save_path
 
