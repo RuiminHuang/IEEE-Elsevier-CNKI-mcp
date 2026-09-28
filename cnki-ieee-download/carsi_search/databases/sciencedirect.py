@@ -42,31 +42,34 @@ class ScienceDirectAdapter(BaseAdapter):
                 return captcha_result
             return {"success": False, "error": "timeout — 搜索结果未加载，可能页面结构变化"}
 
-        # Every result in page order; hasPdf marks the ones with a "View PDF" link.
+        # One entry per li.ResultItem, in page order (structure: tests/fixtures/sd_search_items.html).
+        # Fields are read from their own elements: textContent of a whole item glues words
+        # together ("2022Weiping"), which broke both author splitting and year matching.
         result = await self.page.evaluate(r"""
             () => {
                 const norm = s => (s || '').replace(/\s+/g, ' ').trim();
                 const papers = [];
-                const seen = new Set();
-                for (const a of document.querySelectorAll('a[href*="/science/article/pii/"]')) {
-                    const m = a.href.match(/\/pii\/([A-Z0-9]+)/);
-                    if (!m || seen.has(m[1]) || /\/pdf/i.test(a.pathname)) continue;   // skip "View PDF" links
-                    const title = norm(a.textContent);
-                    if (title.length < 5) continue;
-                    seen.add(m[1]);
-                    const item = a.closest('li, article, [class*="result-item"], [class*="ResultItem"]') || a.parentElement;
-                    const pdfA = item.querySelector('a.download-link, a[href*="/pdfft"], a[href*="pdf.sciencedirectassets"]');
+                for (const li of document.querySelectorAll('li.ResultItem')) {
+                    const a = li.querySelector('a.result-list-title-link');
+                    if (!a) continue;
+                    const names = Array.from(li.querySelectorAll('.Authors .author'))
+                        .map(e => norm(e.textContent)).filter(Boolean);
+                    const date = norm(li.querySelector('.srctitle-date-fields')?.textContent);
+                    const pdfA = li.querySelector('a.download-link, a[href*="/pdfft"]');
                     papers.push({
-                        title, url: a.href, pii: m[1],
-                        authors: norm(item.querySelector('[class*="author" i]')?.textContent),
-                        year: (item.textContent.match(/\b(19|20)\d{2}\b/) || [''])[0],
-                        abstract: norm(item.querySelector('[class*="abstract"], [class*="snippet"]')?.textContent).slice(0, 300),
+                        title: norm(a.textContent), url: a.href,
+                        pii: (a.href.match(/\/pii\/([A-Z0-9]+)/) || [])[1] || '',
+                        authors: names.join('; '),
+                        year: (date.match(/(?<!\d)(19|20)\d{2}(?!\d)/) || [''])[0],
+                        source: norm(li.querySelector('.subtype-srctitle-link')?.textContent),
+                        abstract: '',
                         pdfUrl: pdfA ? pdfA.href : '',
                         hasPdf: !!pdfA,
                     });
                 }
-                const totalMatch = (document.body?.innerText || '').match(/([\d,]+)\s*[Rr]esult/);
-                return { success: true, total: totalMatch ? totalMatch[1] : String(papers.length), papers };
+                const total = norm(document.querySelector('.search-body-results-text')?.textContent)
+                    || norm(document.body?.innerText).match(/([\d,]+)\s*results?/i)?.[0] || '';
+                return { success: true, total: (total.match(/[\d,]+/) || [String(papers.length)])[0], papers };
             }
         """)
 
@@ -88,69 +91,39 @@ class ScienceDirectAdapter(BaseAdapter):
         if captcha_result:
             return captcha_result
 
-        data = await self.page.evaluate("""
+        # Bibliographic fields come from the page's citation_* <meta> tags; authors, abstract,
+        # keywords and the PDF button from the DOM (structure: tests/fixtures/sd_article.html).
+        data = await self.page.evaluate(r"""
             () => {
-                const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+                const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+                const meta = name => norm(document.querySelector(`meta[name="${name}"]`)?.content);
 
-                // 标题：去掉常见前缀
-                let title = norm(
-                    document.querySelector('h1')?.textContent
-                    || document.querySelector('[class*="title"]')?.textContent
-                );
-                title = title.replace(/^(Research paper|Review article|Short communication|Editorial|Letter|Perspective|Case report|Technical note)\\s*/i, '');
+                const title = meta('citation_title') || norm(document.querySelector('h1 .title-text, h1')?.textContent);
+                // given name + surname only; skips affiliation letters like <sup>a</sup>
+                const authors = Array.from(document.querySelectorAll('#author-group .react-xocs-alternative-link'))
+                    .map(e => norm(e.textContent)).filter(Boolean);
+                // #abstracts holds "Highlights" first, then the real abstract
+                const absEl = document.querySelector('#abstracts > .abstract.author:not(.author-highlights)');
+                const abstract = norm(absEl?.textContent).replace(/^Abstract\s*/i, '');
+                const keywords = Array.from(document.querySelectorAll('.keywords-section .keyword'))
+                    .map(k => norm(k.textContent)).filter(Boolean);
+                const date = meta('citation_publication_date') || meta('citation_online_date');
 
-                // 作者：从 content-authors 或 author-group 提取
-                let authors = [];
-                const authorEl = document.querySelector('.content-authors, .author-group');
-                if (authorEl) {
-                    let authorText = norm(authorEl.textContent || '');
-                    // 去掉前缀 "Author links open overlay panel"
-                    authorText = authorText.replace(/^Author links open overlay panel\\s*/i, '');
-                    // 去掉 "Show more" 等后缀
-                    authorText = authorText.replace(/Show m?o?r?e?.*$/i, '').trim();
-                    // 按逗号分隔
-                    authors = authorText.split(',').map(s => norm(s)).filter(t => t && t.length > 1);
-                }
-
-                const abstractEl = document.querySelector(
-                    '#abstracts, [class*="abstract"], .abstract.author'
-                );
-                let abstract = norm(abstractEl?.textContent || '');
-                abstract = abstract.replace(/^Abstract\\s*/i, '');
-
-                const doiEl = document.querySelector('a[href*="doi.org"], [class*="doi"]');
-                const doiText = doiEl?.href?.match(/doi\\.org\\/(.+)/)?.[1]
-                    || norm(doiEl?.textContent);
-
-                const keywords = Array.from(
-                    document.querySelectorAll('[class*="keyword"] span, .keyword a')
-                ).map(k => norm(k.textContent)).filter(t => t && t !== ';');
-
-                const journal = norm(
-                    document.querySelector('a[title*="source"], [class*="publication"], .publication-title-link')?.textContent
-                );
-
-                // 查找真正的 PDF 直链
-                let pdfUrl = '';
-                const pdfLink = document.querySelector(
-                    'a.download-link, a[href*="pdf.sciencedirectassets"], a[href*="/pdfft"], a[data-test="pdf-link"]'
-                );
-                if (pdfLink) {
-                    pdfUrl = pdfLink.href;
-                }
-                // 回退到 /pdfft 模式
-                if (!pdfUrl) {
-                    const piiMatch = location.href.match(/\\/pii\\/([A-Z0-9]+)/);
-                    const pii = piiMatch ? piiMatch[1] : '';
-                    if (pii) {
-                        pdfUrl = location.origin + '/science/article/pii/' + pii
-                            + '/pdfft?isDTMRedir=true&download=true';
-                    }
-                }
+                // the article's own "View PDF" button (not the references' PDF links); it renders
+                // late, so fall back to the pii-based pdfft URL
+                const pdfLink = document.querySelector('a.accessbar-utility-link[href*="pdfft"]');
+                const pii = (location.href.match(/\/pii\/([A-Z0-9]+)/) || [])[1] || '';
+                const pdfUrl = pdfLink ? pdfLink.href
+                    : (pii ? location.origin + '/science/article/pii/' + pii + '/pdfft?isDTMRedir=true&download=true' : '');
 
                 return {
-                    title, authors, abstract, doi: doiText || '',
-                    keywords, journal, pdfUrl, url: location.href
+                    title, authors, abstract, keywords, pdfUrl, url: location.href,
+                    doi: meta('citation_doi'),
+                    venue: meta('citation_journal_title') || norm(document.querySelector('.publication-title')?.textContent),
+                    year: (date.match(/(19|20)\d{2}/) || [''])[0],
+                    volume: meta('citation_volume'),
+                    issn: meta('citation_issn'),
+                    pubDate: date,
                 };
             }
         """)

@@ -131,37 +131,75 @@ def _ieee(request, path, q, st):
 
 
 # ── ScienceDirect ──
+# Markup mirrors the live snapshots in fixtures/sd_search_items.html and sd_article.html.
+
+SD_SNAPSHOT = (FIXTURES / "sd_search_items.html").read_text(encoding="utf-8")
+
+
+def _sd_item(pii: str, title: str, authors: list, journal: str, date: str, has_pdf: bool) -> str:
+    names = "".join(f"<li><span class='author text-xs'>{a}</span></li>" for a in authors)
+    pdf = (f"<a class='anchor download-link' target='_blank' href='/science/article/pii/{pii}"
+           f"/pdfft?pid=1-s2.0-{pii}-main.pdf'><span class='preview-link-text'>View PDF</span></a>"
+           if has_pdf else "")
+    return (f"<li class='ResultItem col-xs-24 push-m' data-doi='10.1016/test.{pii}'>"
+            f"<div class='result-item-container'><div class='result-item-content'>"
+            f"<h2><span><a class='anchor result-list-title-link' href='/science/article/pii/{pii}'>"
+            f"<span class='anchor-text'><span>{title}</span></span></a></span></h2>"
+            f"<div class='SubType hor text-xs'><span class='srctitle-date-fields'><span>"
+            f"<a class='anchor subtype-srctitle-link' href='/journal/x'><span>{journal}</span></a></span>"
+            f"<span>{date}</span></span></div>"
+            f"<ol class='Authors hor reduce-list'>{names}</ol>"
+            f"<div class='PreviewLinks'>{pdf}</div></div></div></li>")
+
+
+def _sd_article(pii: str) -> str:
+    pdf = f"/science/article/pii/{pii}/pdfft?md5=0&pid=1-s2.0-{pii}-main.pdf"
+    return (f"<meta name='citation_title' content='SD Article {pii}'>"
+            f"<meta name='citation_journal_title' content='Journal X'>"
+            f"<meta name='citation_volume' content='12'><meta name='citation_issn' content='1234-5678'>"
+            f"<meta name='citation_doi' content='10.1016/test.{pii}'>"
+            f"<meta name='citation_publication_date' content='2021/03/01'>"
+            f"<h2 class='publication-title'><a><span class='anchor-text'>Journal X</span></a></h2>"
+            f"<h1 class='content-title'><span class='title-text'>SD Article {pii}</span></h1>"
+            f"<div class='author-group' id='author-group'><span class='sr-only'>Author links open overlay panel</span>"
+            f"<button><span class='react-xocs-alternative-link'><span class='given-name'>Alice</span> "
+            f"<span class='text surname'>Smith</span></span><span class='author-ref'><sup>a</sup></span></button>, "
+            f"<button><span class='react-xocs-alternative-link'><span class='given-name'>Bob</span> "
+            f"<span class='text surname'>Jones</span></span><span class='author-ref'><sup>b</sup></span></button></div>"
+            f"<div class='abstracts' id='abstracts'>"
+            f"<div class='abstract author-highlights' id='abs0001'><h2>Highlights</h2>"
+            f"<div class='abstract author'><ul><li>Highlight one.</li></ul></div></div>"
+            f"<div class='abstract author' id='abs0002'><h2>Abstract</h2>"
+            f"<div class='abstract author'><div>Summary of {pii}</div></div></div></div>"
+            f"<div class='keywords-section'><div class='keyword'><span>Batteries</span></div><span>; </span>"
+            f"<div class='keyword'><span>Degradation</span></div></div>"
+            f"<a class='link-button accessbar-utility-link' target='_blank' href='{pdf}'>View PDF</a>"
+            f"<a class='anchor pdf link' target='_blank' href='/science/article/pii/SREF000001/pdfft'>View PDF</a>")
+
 
 def _sd(path, q, st):
     header = ("<div>Access through <b>Test University</b></div>"
               if st.logged_in["sciencedirect"] else "<a>Sign in</a><a>Register</a>")
     if path == "/search":
+        if q.get("qs") == "__snapshot__":
+            return 200, "text/html", _html(header + SD_SNAPSHOT)
         offset = int(q.get("offset", "0"))
         items = []
         for i in range(1, 11):
             pii = f"S{offset + i:010d}"
-            year = "1998" if i == 2 else "2021"
+            date = "5 May 1998" if i == 2 else "1 March 2021"
             has_pdf = i % 2 == 1 or i > 6          # papers 2, 4, 6 have no PDF link
-            pdf = (f"<a class='download-link' href='https://www.sciencedirect.com/science/article/pii/{pii}"
-                   f"/pdfft?md5=x&pid=1-s2.0-{pii}-main.pdf'>View PDF</a>" if has_pdf else "")
-            items.append(
-                f"<li class='ResultItem'><h2><a class='result-list-title-link' "
-                f"href='https://www.sciencedirect.com/science/article/pii/{pii}'>SD O{offset} Paper {i}</a></h2>"
-                f"<div class='Authors'>Author {i}</div><span class='srctitle-date-fields'>Journal X, {year}</span>"
-                f"{pdf}</li>")
-        body = f"{header}<h1>1,234 results</h1><ol>{''.join(items)}</ol>"
+            items.append(_sd_item(pii, f"SD O{offset} Paper {i}", [f"Alice {i}", f"Bob {i}"],
+                                  "Journal X", date, has_pdf))
+        body = (f"{header}<h1 class='text-l'><span class='search-body-results-text'>1,234 results</span></h1>"
+                f"<ol class='search-result-wrapper'>{''.join(items)}</ol>")
         return 200, "text/html", _html(body)
     m = re.match(r"/science/article/pii/([A-Z0-9]+)(/pdfft)?", path)
     if m and m.group(2):
         target = f"https://pdf.sciencedirectassets.com/{m.group(1)}.pdf"
         return 200, "text/html", _html(f"<script>location.replace('{target}')</script>")
     if m:
-        pii = m.group(1)
-        body = (f"{header}<h1>SD Article {pii}</h1><div class='author-group'>Alice, Bob</div>"
-                f"<div id='abstracts'>Summary of {pii}</div>"
-                f"<a class='download-link' href='https://www.sciencedirect.com/science/article/pii/{pii}"
-                f"/pdfft?md5=x&pid=1-s2.0-{pii}-main.pdf'>View PDF</a>")
-        return 200, "text/html", _html(body)
+        return 200, "text/html", _html(header + _sd_article(m.group(1)))
     return 200, "text/html", _html(f"{header}<div>ScienceDirect home</div>")
 
 
