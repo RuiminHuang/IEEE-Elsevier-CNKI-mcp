@@ -38,6 +38,23 @@ async def test_nearly_empty_site_page_is_not_mistaken_for_logged_out(srv, sites)
     assert "Downloaded PDF" in text, text
 
 
+async def test_error_page_on_site_is_not_mistaken_for_logged_out(srv, sites):
+    # live: after a 403 the tool's tab sat on an error page whose header says "Sign in";
+    # login markers are defined for the home page, so the check must use the home page
+    page, _ = await srv._ensure_page("sciencedirect")
+    await page.goto(PDFFT + "&forbidden=1")
+    text = (await srv.call_tool("sciencedirect_download", {"url": ARTICLE}))[0].text
+    assert "Downloaded PDF" in text, text
+
+
+async def test_goto_method_opens_the_buttons_real_link(srv, sites, monkeypatch):
+    # the experiment's "goto" variant must use the same (tokenised) link the button has
+    monkeypatch.setattr(srv, "SD_PDF_VIA_CLICK", False)
+    text = (await srv.call_tool("sciencedirect_download", {"url": ARTICLE}))[0].text
+    assert "Downloaded PDF" in text, text
+    assert any("pdfft?md5=0" in u for u in sites.requests), sites.requests
+
+
 async def test_clicks_the_articles_own_pdf_button(srv, sites):
     # the fake article also links a reference's PDF (SREF000001); it must not be used
     await srv.call_tool("sciencedirect_download", {"url": ARTICLE})

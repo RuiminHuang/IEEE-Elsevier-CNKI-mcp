@@ -62,10 +62,6 @@ def _lock_keys(name: str) -> list[str]:
 # Helper Functions
 # ══════════════════════════════════════════════════════════════════════
 
-def _db_domain(db: str) -> str:
-    return urlparse(get_db(db)["home_url"]).netloc
-
-
 def _page_alive(page) -> bool:
     # page.url / context.pages are cached values that never raise, so they can't
     # tell whether a tab or the browser is gone; is_closed() can.
@@ -170,21 +166,15 @@ def _need_action_response(db: str, action: str) -> list[TextContent]:
 
 
 async def _check_login(db: str, page) -> str:
-    """Open db's home page if needed and report 'ok', 'login' or 'challenge'."""
+    """Report 'ok', 'login' or 'challenge', judged on db's home page: the login markers
+    in registry.py describe the home page, and other pages (PDF, redirect, 403) mislead."""
     home = get_db(db)["home_url"]
-    text_js = "() => document.body.innerText.slice(0, 5000)"
     try:
-        if urlparse(page.url).netloc != _db_domain(db) or _is_login_url(page.url):
+        if page.url != home:
             await page.goto(home, wait_until="domcontentloaded", timeout=30000)
         if _is_login_url(page.url):
             return "login"
-        text = await page.evaluate(text_js)
-        if len(text.strip()) < MIN_PAGE_TEXT and page.url != home:
-            # a PDF / redirect page on the site says nothing about login: ask the home page
-            await page.goto(home, wait_until="domcontentloaded", timeout=30000)
-            if _is_login_url(page.url):
-                return "login"
-            text = await page.evaluate(text_js)
+        text = await page.evaluate("() => document.body.innerText.slice(0, 5000)")
     except Exception as e:
         log.debug(f"Login check failed for {db}: {e}")
         return "login"
@@ -564,16 +554,17 @@ _SD_PDF_BUTTON = 'a.accessbar-utility-link[href*="pdfft"]'   # the article's own
 
 async def _sd_open_pdf(page, url: str):
     """Open an SD PDF the way a reader does: article page, tab in front, click "View PDF"
-    (not one of the references' PDF links). Returns the page showing the PDF, usually a new tab."""
-    if not SD_PDF_VIA_CLICK:
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        return page
+    (not one of the references' PDF links). Returns the page showing the PDF, usually a new tab.
+    The button's link carries an access token; untokenised pdfft links get HTTP 403."""
     m = re.search(r"/pii/([A-Z0-9]+)", url)
     article = f"https://www.sciencedirect.com/science/article/pii/{m.group(1)}" if m else url
     if urlparse(page.url).path != urlparse(article).path:
         await page.goto(article, wait_until="domcontentloaded", timeout=30000)
     button = page.locator(_SD_PDF_BUTTON).first
     await button.wait_for(timeout=20000)   # the access bar renders late
+    if not SD_PDF_VIA_CLICK:
+        await page.goto(await button.evaluate("a => a.href"), wait_until="domcontentloaded", timeout=30000)
+        return page
     await page.bring_to_front()
     if await button.get_attribute("target") == "_blank":
         async with page.context.expect_page(timeout=15000) as new:

@@ -187,8 +187,11 @@ def _sd_article(pii: str) -> str:
             f"<div class='abstract author'><div>Summary of {pii}</div></div></div></div>"
             f"<div class='keywords-section'><div class='keyword'><span>Batteries</span></div><span>; </span>"
             f"<div class='keyword'><span>Degradation</span></div></div>"
-            f"<a class='link-button accessbar-utility-link' target='_blank' href='{pdf}'>View PDF</a>"
-            f"<a class='anchor pdf link' target='_blank' href='/science/article/pii/SREF000001/pdfft'>View PDF</a>")
+            f"<a class='anchor pdf link' target='_blank' href='/science/article/pii/SREF000001/pdfft'>View PDF</a>"
+            # like the live page, the access bar's own "View PDF" button renders late
+            f"<script>setTimeout(() => document.body.insertAdjacentHTML('beforeend',"
+            f" '<a class=\"link-button accessbar-utility-link\" target=\"_blank\" href=\"{pdf}\">View PDF</a>'),"
+            f" 1500)</script>")
 
 
 def _sd(path, q, st):
@@ -216,6 +219,9 @@ def _sd(path, q, st):
     m = re.match(r"/science/article/pii/([A-Z0-9]+)(/pdfft)?", path)
     if m and m.group(2) and q.get("stay"):   # an almost empty page on the site (e.g. mid-redirect)
         return 200, "text/html", "<!doctype html><html><body></body></html>"
+    if m and m.group(2) and (q.get("forbidden") or ("isDTMRedir" in q and "md5" not in q)):
+        # SD's 403 page (live: the untokenised fallback pdfft link gets 403); generic "Sign in" header
+        return 403, "text/html", _html("<a>Sign in</a><h1>Access denied</h1>")
     if m and m.group(2):
         target = f"https://pdf.sciencedirectassets.com/{m.group(1)}.pdf"
         return 200, "text/html", _html(f"<script>location.replace('{target}')</script>")
