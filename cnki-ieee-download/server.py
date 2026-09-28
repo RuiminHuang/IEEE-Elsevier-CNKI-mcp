@@ -129,6 +129,15 @@ async def _ensure_page(db: str):
 _LOGIN_HOST_PREFIXES = ("login.", "idp.", "ids.", "fsso.", "auth.", "cas.", "sso.")
 _LOGIN_PATH_WORDS = ("login", "wayf", "authserver", "/cas/", "/idp/", "/sso", "shibauth")
 MIN_PAGE_TEXT = 100   # less text than this means the page hasn't rendered yet
+# Bot checks in page text: Cloudflare ("Just a moment", "Are you a robot") and Elsevier's
+# own "Security verification" page on pdf.sciencedirectassets.com, whose body reads
+# "Request Verification: In Progress".
+_CHALLENGE_MARKERS = ("are you a robot", "just a moment", "request verification")
+
+
+def _is_challenge(page_text: str) -> bool:
+    text = page_text.lower()
+    return any(m in text for m in _CHALLENGE_MARKERS)
 
 
 def _is_login_url(url: str) -> bool:
@@ -143,7 +152,7 @@ def _is_logged_in(db: str, page_text: str) -> bool:
     """Check if user is logged in based on page text keywords."""
     if len(page_text.strip()) < MIN_PAGE_TEXT:
         return False   # blank or still loading: can't tell, so don't claim success
-    if "Are you a robot" in page_text or "Just a moment" in page_text:
+    if _is_challenge(page_text):
         return False
     if db == "sciencedirect":
         has_inst = "institutional access via" in page_text.lower()
@@ -212,7 +221,7 @@ async def _check_login(db: str, page) -> str:
     except Exception as e:
         log.debug(f"Login check failed for {db}: {e}")
         return "login"
-    if "Are you a robot" in text or "Just a moment" in text:
+    if _is_challenge(text):
         return "challenge"
     return "ok" if _is_logged_in(db, text) else "login"
 
@@ -226,7 +235,7 @@ async def _ensure_logged_in(db: str) -> tuple[PwPage | None, list[TextContent] |
     if state == "ok":
         return page, None
     if state == "challenge":
-        return None, _need_action_response(db, "显示了 Cloudflare 验证页面。")
+        return None, _need_action_response(db, "显示了安全验证页面（Cloudflare / Security verification）。")
     return None, _need_login_response(db)
 
 
@@ -623,7 +632,7 @@ async def _sd_navigate_and_fetch(page, url: str) -> str | None:
             page_text = await page.evaluate("() => document.body?.innerText?.slice(0, 500) || ''")
         except Exception:
             page_text = "just a moment"   # context destroyed mid-challenge; keep waiting
-        if "robot" not in page_text.lower() and "just a moment" not in page_text.lower():
+        if not _is_challenge(page_text):
             break
         if time.monotonic() > deadline:
             return None
@@ -755,7 +764,7 @@ async def handle_download(db: str, args: dict) -> list[TextContent]:
     if is_sd and "/pdfft" in url:
         pdf_b64 = await _sd_navigate_and_fetch(page, url)
         if pdf_b64 is None:
-            return _need_action_response(db, "PDF 域名显示了 Cloudflare 验证。")
+            return _need_action_response(db, "PDF 域名显示了安全验证页面（Cloudflare / Security verification），请在浏览器中完成验证后重试下载。")
     else:
         try:
             await page.unroute("**/*")

@@ -26,7 +26,7 @@ class FakeState:
     delays: dict = field(default_factory=dict)   # URL substring -> seconds before responding
     cnki_delay_ms: int = 1200                    # CNKI AJAX refresh delay
     cnki_captcha: bool = False
-    sd_challenge: bool = False
+    sd_challenge: str = ""   # "", "cloudflare" or "elsevier" (page shown on the PDF domain)
     requests: list = field(default_factory=list)
     connections: int = 0
 
@@ -59,8 +59,12 @@ def _respond(url: str, st: FakeState):
     if u.netloc == "www.sciencedirect.com":
         return _sd(u.path, q, st)
     if u.netloc == "pdf.sciencedirectassets.com":
-        if st.sd_challenge:
+        if st.sd_challenge == "cloudflare":
             return 200, "text/html", _html("<h1>Just a moment...</h1>")
+        if st.sd_challenge == "elsevier":   # as seen live on pdf.sciencedirectassets.com
+            return 200, "text/html", ("<!DOCTYPE html><html><head><title>Security verification</title></head>"
+                                      "<body><h1>Request Verification: In Progress</h1>"
+                                      "<p>If you are unable to access your content please try again.</p></body></html>")
         return 200, "text/plain", PDF_BYTES  # text/plain keeps headless Chrome from opening a PDF viewer
     return _cnki(u.path, q, st)
 

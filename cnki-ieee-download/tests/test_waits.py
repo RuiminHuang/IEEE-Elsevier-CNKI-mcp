@@ -9,9 +9,10 @@ from carsi_search import engine
 pytestmark = pytest.mark.anyio
 
 
-async def test_sd_cloudflare_returns_quickly(srv, sites, monkeypatch):
+@pytest.mark.parametrize("challenge", ["cloudflare", "elsevier"])
+async def test_sd_challenge_returns_quickly(srv, sites, monkeypatch, challenge):
     monkeypatch.setattr(srv, "CHALLENGE_GRACE_SECONDS", 2)
-    sites.sd_challenge = True
+    sites.sd_challenge = challenge
     t0 = time.monotonic()
     with anyio.fail_after(60):
         text = (await srv.call_tool("sciencedirect_download",
