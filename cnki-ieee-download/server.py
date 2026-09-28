@@ -21,6 +21,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -45,82 +46,68 @@ DB_LIST = ", ".join(list_dbs())
 # Helper Functions
 # ══════════════════════════════════════════════════════════════════════
 
-async def _ensure_connection() -> str | None:
-    """Ensure CDP connection exists. Returns error message or None."""
+def _db_domain(db: str) -> str:
+    return urlparse(get_db(db)["home_url"]).netloc
+
+
+def _page_alive(page) -> bool:
+    # page.url / context.pages are cached values that never raise, so they can't
+    # tell whether a tab or the browser is gone; is_closed() can.
+    return page is not None and not page.is_closed()
+
+
+def _find_db_page(ctx, db: str):
+    """Return an open tab already showing db's site (not a login page), or None."""
+    domain = _db_domain(db)
+    for p in ctx.pages:
+        if not p.is_closed() and urlparse(p.url).netloc == domain and "login" not in p.url.lower():
+            return p
+    return None
+
+
+async def _ensure_connection(stale: CarsiAuth | None = None) -> str | None:
+    """Ensure a live CDP connection. `stale` is a connection the caller found broken
+    even though it still looked alive. Returns error message or None."""
     global _auth, _pages
-    if _auth and _auth.context:
-        # Verify the connection is actually alive by probing it
-        try:
-            _ = _auth.context.pages
-            return None
-        except Exception:
-            log.info("[CDP] Connection stale, reconnecting...")
+    if _auth and _auth.is_alive() and _auth is not stale:
+        return None
     if _auth:
+        log.info("[CDP] Connection lost, reconnecting...")
         try:
             await _auth.stop()
         except Exception:
             pass
-    _pages = {}
-    _auth = CarsiAuth()
+    _auth, _pages = None, {}
+    auth = CarsiAuth()
     try:
-        await _auth.start()
-        return None
+        await auth.start()   # also restores saved cookies
     except RuntimeError as e:
-        _auth = None
         return str(e)
+    _auth = auth
+    return None
 
 
 async def _ensure_page(db: str):
-    """Get or create a page for the database. Returns (page, error_or_None)."""
-    global _auth, _pages
-
-    err = await _ensure_connection()
-    if err:
-        return None, err
-
-    ctx = _auth.context  # type: ignore[union-attr]
-    if not ctx:
-        return None, "CDP 连接已断开"
-
-    page = _pages.get(db)
-    if page:
-        try:
-            _ = page.url
-        except Exception:
-            page = None
-            _pages.pop(db, None)
-
-    if not page:
-        db_config = get_db(db)
-        if not db_config:
-            return None, f"Unknown database: {db}"
-        domain = db_config["home_url"].split("/")[2]
-        try:
-            for p in ctx.pages:
-                if domain in p.url and "login" not in p.url.lower():
-                    page = p
-                    break
-        except Exception:
-            pass
-
-    if not page:
-        try:
-            page = await ctx.new_page()
-        except Exception as e:
-            # Context truly dead — force reconnect
-            log.info(f"[CDP] new_page failed, forcing reconnect: {e}")
-            _auth = None
-            _pages = {}
-            err = await _ensure_connection()
-            if err:
-                return None, err
-            ctx = _auth.context  # type: ignore[union-attr]
-            if not ctx:
-                return None, "CDP 重连失败"
-            page = await ctx.new_page()
-
-    _pages[db] = page
-    return page, None
+    """Get a live page for db, reconnecting once if the browser went away.
+    Returns (page, error_or_None)."""
+    if not get_db(db):
+        return None, f"Unknown database: {db}"
+    stale = None
+    for _ in range(2):
+        err = await _ensure_connection(stale)
+        if err:
+            return None, err
+        page = _pages.get(db)
+        if not _page_alive(page):
+            try:
+                page = _find_db_page(_auth.context, db) or await _auth.context.new_page()
+            except Exception as e:
+                log.info(f"[CDP] new_page failed, reconnecting: {e}")
+                stale = _auth
+                continue
+        _pages[db] = page
+        return page, None
+    return None, "CDP 重连失败"
 
 
 def _is_logged_in(db: str, page_text: str) -> bool:
@@ -183,100 +170,11 @@ def _need_action_response(db: str, action: str) -> list[TextContent]:
              f"[ACTION_REQUIRED: 请使用 AskUserQuestion 询问用户是否已完成操作]")]
 
 
-async def _try_cookie_session(db: str) -> bool:
-    """Try to restore session from saved cookies. Returns True on success.
-
-    Reuses existing _auth connection if available — creating a new CarsiAuth
-    and calling stop() on failure would disconnect the shared Playwright session
-    and close all open pages across all databases.
-    """
-    global _auth, _pages
-
-    # Reuse existing connection if alive
-    if _auth and _auth.context:
-        try:
-            _ = _auth.context.pages
-        except Exception:
-            _auth = None
-            _pages = {}
-
-    # Need to establish a new connection
-    if not _auth or not _auth.context:
-        new_auth = CarsiAuth()
-        try:
-            await new_auth.start()
-        except RuntimeError:
-            return False
-        _auth = new_auth
-        _pages = {}
-
-    ctx = _auth.context
-    if not ctx:
-        return False
-
-    db_config = get_db(db)
-    if not db_config:
-        return False
-
-    domain = db_config["home_url"].split("/")[2]
-    page = _pages.get(db)
-    if page:
-        try:
-            _ = page.url
-        except Exception:
-            page = None
-
-    if not page:
-        for p in ctx.pages:
-            if domain in p.url and "login" not in p.url.lower():
-                page = p
-                break
-
-    if not page:
-        try:
-            page = await ctx.new_page()
-            await page.goto(db_config["home_url"], wait_until="domcontentloaded", timeout=30000)
-        except Exception as e:
-            log.debug(f"_try_cookie_session new_page failed: {e}")
-            return False
-
-    url = page.url
-    if any(kw in url.lower() for kw in ["login", "wayf", "cas", "authserver"]):
-        return False
-    if domain not in url:
-        return False
-
-    try:
-        page_text = await page.evaluate("() => document.body.innerText.slice(0, 5000)")
-        if not _is_logged_in(db, page_text):
-            return False
-    except Exception as e:
-        log.debug(f"Login check error (ignored): {e}")
-
-    _pages[db] = page
-    return True
-
-
 async def _verify_login(db: str, page) -> bool:
     """Navigate to db home if needed and verify login status. Returns True if logged in."""
-    db_config = get_db(db)
-    if not db_config:
-        return False
-
-    domain = db_config["home_url"].split("/")[2]
-
     try:
-        current = page.url
-    except Exception:
-        return False
-
-    if domain not in current:
-        try:
-            await page.goto(db_config["home_url"], wait_until="domcontentloaded", timeout=30000)
-        except Exception:
-            return False
-
-    try:
+        if urlparse(page.url).netloc != _db_domain(db):
+            await page.goto(get_db(db)["home_url"], wait_until="domcontentloaded", timeout=30000)
         page_text = await page.evaluate("() => document.body.innerText.slice(0, 5000)")
         return _is_logged_in(db, page_text)
     except Exception:
@@ -284,34 +182,12 @@ async def _verify_login(db: str, page) -> bool:
 
 
 async def _ensure_logged_in(db: str) -> tuple[PwPage | None, list[TextContent] | None]:
-    """Ensure we have a logged-in page for db. Returns (page, error_response_or_None).
-
-    Flow:
-    1. Try existing page → verify login
-    2. Try cookie restore → verify login
-    3. Return need_login_response
-    """
-    global _auth, _pages
-
-    # Step 1: if we already have a page, verify it's still logged in
-    if _auth and _pages.get(db):
-        page = _pages[db]
-        try:
-            _ = page.url
-            if await _verify_login(db, page):
-                return page, None
-        except Exception:
-            pass
-        # Page invalid or not logged in — remove it
-        _pages.pop(db, None)
-
-    # Step 2: try cookie restore
-    if await _try_cookie_session(db):
-        page = _pages[db]
-        log.info(f"[CDP] {db} session restored from cookies")
+    """Ensure we have a logged-in page for db. Returns (page, error_response_or_None)."""
+    page, err = await _ensure_page(db)
+    if err or not page:
+        return None, [TextContent(type="text", text=err or "CDP 连接失败")]
+    if await _verify_login(db, page):
         return page, None
-
-    # Step 3: no valid session — prompt user to login
     return None, _need_login_response(db)
 
 
@@ -525,29 +401,15 @@ async def handle_login(db: str) -> list[TextContent]:
     if db not in list_dbs():
         return [TextContent(type="text", text=f"Unknown database: {db}. Available: {DB_LIST}")]
 
-    err = await _ensure_connection()
-    if err:
-        return [TextContent(type="text", text=err)]
-
-    ctx = _auth.context  # type: ignore[union-attr]
-    if not ctx:
-        return [TextContent(type="text", text="CDP 连接失败")]
+    page, err = await _ensure_page(db)
+    if err or not page:
+        return [TextContent(type="text", text=err or "CDP 连接失败")]
 
     db_config = get_db(db)
-    if not db_config:
-        return [TextContent(type="text", text=f"Unknown database: {db}")]
-
     label = db_config["label"]
     home_url = db_config["home_url"]
-    domain = home_url.split("/")[2]
-
-    page = None
-    for p in ctx.pages:
-        if domain in p.url and "login" not in p.url.lower():
-            page = p
-            break
-    if not page:
-        page = await ctx.new_page()
+    domain = _db_domain(db)
+    if urlparse(page.url).netloc != domain:
         await page.goto(home_url, wait_until="domcontentloaded", timeout=30000)
 
     current_url = page.url
@@ -852,13 +714,10 @@ async def handle_status() -> list[TextContent]:
         marker = " ← logged in" if logged_in else ""
         lines.append(f"  - `{name}`: {db['label']}{marker}")
 
-    if _auth and _auth.context:
+    if _auth and _auth.is_alive():
         lines.append("\nCDP 连接: 已连接")
         for db_name, pg in _pages.items():
-            try:
-                lines.append(f"  {db_name}: {pg.url[:80]}")
-            except Exception:
-                lines.append(f"  {db_name}: (page invalid)")
+            lines.append(f"  {db_name}: {pg.url[:80] if _page_alive(pg) else '(页面已关闭)'}")
     else:
         lines.append("\nCDP 连接: 未连接。使用 {db}_login 工具连接。")
 

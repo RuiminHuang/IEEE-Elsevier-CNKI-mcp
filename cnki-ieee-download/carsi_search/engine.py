@@ -226,13 +226,17 @@ class CarsiAuth:
             self.STATE_FILE.unlink()
             log.info("[CDP] 已清除保存的 cookie 文件")
 
+    def is_alive(self) -> bool:
+        """True while the CDP connection to the browser is still open."""
+        return self.browser is not None and self.browser.is_connected() and self.context is not None
+
     async def stop(self):
+        """Disconnect from the browser. The browser keeps running so logins survive."""
         if self._playwright:
-            await self._playwright.stop()
+            try:
+                await self._playwright.stop()
+            except Exception as e:
+                log.debug(f"[CDP] playwright stop error: {e}")
             self._playwright = None
         self.browser = None
         self.context = None
-        if self._browser_process and self._browser_process.poll() is None:
-            self._browser_process.terminate()
-            log.info("[CDP] 已关闭自动启动的浏览器")
-            self._browser_process = None
