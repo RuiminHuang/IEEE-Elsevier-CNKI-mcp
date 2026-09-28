@@ -473,9 +473,9 @@ class CnkiAdapter(BaseAdapter):
         return False
 
     # ── 下载 ──────────────────────────────────────────────────────
-    # 注意: 此 download 方法只在非 CDP 模式下使用。
+    # 注意: 此 download 方法当前未被调用。
     # CDP 模式下，下载由 server.py 的 handle_cnki_download() 处理，
-    # 它使用 page.expect_download() 捕获下载事件并保存到项目目录。
+    # 它通过 _browser_download()（浏览器级 CDP 下载事件）把文件保存到项目目录。
 
     async def download(self, url: str, **kwargs) -> dict:
         """打开 CNKI 下载页面。用户在浏览器中手动完成下载。

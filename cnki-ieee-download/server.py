@@ -655,6 +655,83 @@ def _save_pdf(pdf_data: bytes, title: str) -> Path:
     return save_path
 
 
+def _unique_path(directory: Path, title: str, ext: str) -> Path:
+    """directory/<title><ext>; adds ' (2)', ' (3)'… instead of overwriting."""
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', title).strip().rstrip('.')[:80]
+    stem = stem or f"paper_{int(time.time())}"
+    path = directory / f"{stem}{ext}"
+    n = 2
+    while path.exists():
+        path = directory / f"{stem} ({n}){ext}"
+        n += 1
+    return path
+
+
+def _looks_like_html(head: bytes) -> bool:
+    h = head.lstrip()[:200].lower()
+    return h.startswith((b"<!doctype", b"<html", b"<?xml", b"<head", b"<body")) or b"<html" in h
+
+
+async def _browser_download(browser, click, save_dir: Path,
+                            start_timeout: float = 20, finish_timeout: float = 180):
+    """Let the browser itself save a download into save_dir.
+
+    Over connect_over_cdp, Playwright's download.save_as() tends to produce empty
+    files. Instead, a browser-level CDP session sets Browser.setDownloadBehavior so
+    the browser writes save_dir/<guid>, and Browser.downloadProgress says exactly
+    when that download completed. Being browser-level, it also sees downloads CNKI
+    starts in a new tab. `click` is an async callable that starts the download.
+    Returns (path, suggested_filename, error_or_None)."""
+    cdp = await browser.new_browser_cdp_session()
+    loop = asyncio.get_running_loop()
+    began, finished = loop.create_future(), loop.create_future()
+    guid: dict = {}
+
+    def on_begin(evt):
+        if not began.done():
+            guid["value"] = evt["guid"]
+            began.set_result(evt)
+
+    def on_progress(evt):
+        if (evt.get("guid") == guid.get("value") and evt.get("state") in ("completed", "canceled")
+                and not finished.done()):
+            finished.set_result(evt["state"])
+
+    cdp.on("Browser.downloadWillBegin", on_begin)
+    cdp.on("Browser.downloadProgress", on_progress)
+    try:
+        await cdp.send("Browser.setDownloadBehavior", {
+            "behavior": "allowAndName",
+            "downloadPath": str(save_dir.resolve()),
+            "eventsEnabled": True,
+        })
+        await click()
+        try:
+            evt = await asyncio.wait_for(began, start_timeout)
+        except asyncio.TimeoutError:
+            return None, "", "下载没有开始（可能需要登录或完成验证）"
+        try:
+            state = await asyncio.wait_for(finished, finish_timeout)
+        except asyncio.TimeoutError:
+            try:
+                await cdp.send("Browser.cancelDownload", {"guid": evt["guid"]})
+            except Exception:
+                pass
+            return None, "", f"下载超过 {finish_timeout:.0f} 秒仍未完成"
+        if state != "completed":
+            return None, "", "下载被取消"
+        return save_dir / evt["guid"], evt.get("suggestedFilename", ""), None
+    finally:
+        try:   # hand downloads back to the browser's normal behavior
+            await cdp.send("Browser.setDownloadBehavior", {"behavior": "default"})
+        except Exception:
+            pass
+        try:
+            await cdp.detach()
+        except Exception:
+            pass
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Download Handler (IEEE / ScienceDirect)
 # ══════════════════════════════════════════════════════════════════════
@@ -828,14 +905,16 @@ async def handle_cnki_detail(args: dict) -> list[TextContent]:
     return [TextContent(type="text", text=text or "未提取到详情")]
 
 
-async def handle_cnki_download(args: dict) -> list[TextContent]:
-    """CNKI download using CDP setDownloadBehavior.
+_CNKI_TITLE_JS = (
+    "() => (document.querySelector('.brief h1')?.innerText || '')"
+    "  .replace(/\\s*附视频\\s*$/, '').replace(/\\s*网络首发\\s*$/, '').trim()"
+)
+_CNKI_DOWNLOAD_LINKS = ("#pdfDown, .btn-dlpdf a", "#cajDown, .btn-dlcaj a")   # PDF preferred
 
-    In CDP (connect_over_cdp) mode, Playwright's download.save_as() / download.path()
-    often produce 0-byte files because Playwright can't access the browser's temp files.
-    Instead, we use CDP's Browser.setDownloadBehavior to tell the browser to save directly
-    to our target directory, then poll for the file to appear.
-    """
+
+async def handle_cnki_download(args: dict) -> list[TextContent]:
+    """CNKI download: PDF if offered, otherwise CAJ. The browser saves the file
+    itself (see _browser_download) and it is then renamed to the paper title."""
     page, err = await _ensure_page("cnki")
     if err or not page:
         return [TextContent(type="text", text=err or "Failed to get CNKI page")]
@@ -859,102 +938,38 @@ async def handle_cnki_download(args: dict) -> list[TextContent]:
     if captcha:
         return _need_action_response("cnki", "正在显示滑块验证码。")
 
-    has_pdf = await page.evaluate("() => !!document.querySelector('#pdfDown, .btn-dlpdf a')")
-    if not has_pdf:
-        return [TextContent(type="text", text="未找到下载链接。")]
+    for selector in _CNKI_DOWNLOAD_LINKS:
+        link = page.locator(selector).first
+        if await link.count() > 0:
+            break
+    else:
+        return [TextContent(type="text", text="未找到 PDF 或 CAJ 下载链接。")]
 
+    title = await page.evaluate(_CNKI_TITLE_JS)
     save_dir = Path(os.getcwd()) / "downloads"
     save_dir.mkdir(exist_ok=True)
 
-    # Record existing files before download
-    existing_files = set(save_dir.iterdir())
-
-    # Use CDP to redirect browser downloads to our target directory
-    cdp = await page.context.new_cdp_session(page)
-    try:
-        await cdp.send("Browser.setDownloadBehavior", {
-            "behavior": "allowAndName",
-            "downloadPath": str(save_dir.resolve()),
-            "eventsEnabled": True,
-        })
-    except Exception as e:
-        log.debug(f"CDP setDownloadBehavior failed, trying Page-level: {e}")
-        try:
-            await cdp.send("Page.setDownloadBehavior", {
-                "behavior": "allow",
-                "downloadPath": str(save_dir.resolve()),
-            })
-        except Exception as e2:
-            log.info(f"CDP download redirect failed: {e2}")
-
-    # Click download button
-    await page.locator('#pdfDown, .btn-dlpdf a').first.click()
-
-    # Wait for new file to appear in save_dir (poll up to 60s)
-    new_file = None
-    for _ in range(60):
-        await asyncio.sleep(1)
-        current_files = set(save_dir.iterdir())
-        new_files = current_files - existing_files
-        # Filter out partial downloads (.crdownload, .tmp, .part)
-        completed = [
-            f for f in new_files
-            if not f.suffix.lower() in ('.crdownload', '.tmp', '.part', '.download')
-            and f.stat().st_size > 0
-        ]
-        if completed:
-            new_file = completed[0]
-            # Wait for file to finish writing (size stabilizes)
-            prev_size = new_file.stat().st_size
-            await asyncio.sleep(1)
-            curr_size = new_file.stat().st_size
-            if curr_size == prev_size and curr_size > 0:
-                break
-            # Still writing, keep waiting
-            new_file = None
-
-    # Cleanup CDP session
-    try:
-        await cdp.detach()
-    except Exception:
-        pass
-
-    if not new_file:
+    path, suggested, err = await _browser_download(_auth.browser, link.click, save_dir)
+    if err:
         return [TextContent(type="text",
-            text="⚠️ CNKI 下载超时。\n"
-                 "文件可能已下载到浏览器默认目录。请检查浏览器下载记录。\n\n"
+            text=f"⚠️ CNKI 下载失败：{err}\n\n"
+                 f"[ACTION_REQUIRED: 请使用 AskUserQuestion 询问用户是否已登录 CNKI 或完成验证]")]
+
+    head = path.read_bytes()[:512]
+    if not head or _looks_like_html(head):
+        preview = head[:100].decode("utf-8", errors="replace")
+        path.unlink(missing_ok=True)
+        return [TextContent(type="text",
+            text=f"CNKI 下载失败：返回的不是有效的 PDF/CAJ 文件（可能登录已过期）。\n内容预览: {preview}\n\n"
                  f"[ACTION_REQUIRED: 请使用 AskUserQuestion 询问用户是否已登录 CNKI]")]
 
-    file_size = new_file.stat().st_size
-    with open(new_file, 'rb') as f:
-        header = f.read(4)
-    if header != b'%PDF':
-        content = new_file.read_bytes()[:200].decode('utf-8', errors='replace')
-        new_file.unlink()
-        return [TextContent(type="text",
-            text=f"CNKI 下载失败：返回的不是 PDF 文件。\n内容预览: {content[:100]}\n\n"
-                 f"[ACTION_REQUIRED: 请使用 AskUserQuestion 询问用户是否已登录 CNKI]")]
-
-    # Rename UUID file to paper title
-    try:
-        title = await page.evaluate(
-            "() => (document.querySelector('.brief h1')?.innerText || '')"
-            "  .replace(/\\s*附视频\\s*$/, '').replace(/\\s*网络首发\\s*$/, '').trim()"
-        )
-        if title:
-            safe_title = re.sub(r'[<>:"/\\|?*]', '', title).strip()[:80]
-            ext = new_file.suffix if new_file.suffix else '.pdf'
-            renamed = new_file.parent / f"{safe_title}{ext}"
-            if renamed.exists():
-                renamed = new_file.parent / f"{safe_title}_{int(time.time())}{ext}"
-            new_file.rename(renamed)
-            new_file = renamed
-    except Exception as e:
-        log.debug(f"Rename failed (keeping UUID name): {e}")
-
+    ext = ".pdf" if head.startswith(b"%PDF") else (Path(suggested).suffix.lower() or ".caj")
+    final = _unique_path(save_dir, title or Path(suggested).stem, ext)
+    path.rename(final)
     await _save_cookies()
+    kind = ext.lstrip(".").upper()
     return [TextContent(type="text",
-        text=f"CNKI PDF 下载成功：{new_file.name}\n大小: {file_size} bytes\n保存: {new_file}")]
+        text=f"CNKI {kind} 下载成功：{final.name}\n大小: {final.stat().st_size} bytes\n保存: {final}")]
 
 
 # ══════════════════════════════════════════════════════════════════════
