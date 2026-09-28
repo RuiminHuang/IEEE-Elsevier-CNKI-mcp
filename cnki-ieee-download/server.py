@@ -75,7 +75,7 @@ def _find_db_page(ctx, db: str):
     """Return an open tab already showing db's site (not a login page), or None."""
     domain = _db_domain(db)
     for p in ctx.pages:
-        if not p.is_closed() and urlparse(p.url).netloc == domain and "login" not in p.url.lower():
+        if not p.is_closed() and urlparse(p.url).netloc == domain and not _is_login_url(p.url):
             return p
     return None
 
@@ -126,8 +126,23 @@ async def _ensure_page(db: str):
     return None, "CDP 重连失败"
 
 
+_LOGIN_HOST_PREFIXES = ("login.", "idp.", "ids.", "fsso.", "auth.", "cas.", "sso.")
+_LOGIN_PATH_WORDS = ("login", "wayf", "authserver", "/cas/", "/idp/", "/sso", "shibauth")
+MIN_PAGE_TEXT = 100   # less text than this means the page hasn't rendered yet
+
+
+def _is_login_url(url: str) -> bool:
+    """True for login / identity-provider pages. Only host and path are checked,
+    so search terms like 'forecasting' in the query string don't count."""
+    u = urlparse(url)
+    host, path = u.netloc.lower(), u.path.lower()
+    return host.startswith(_LOGIN_HOST_PREFIXES) or any(w in path for w in _LOGIN_PATH_WORDS)
+
+
 def _is_logged_in(db: str, page_text: str) -> bool:
     """Check if user is logged in based on page text keywords."""
+    if len(page_text.strip()) < MIN_PAGE_TEXT:
+        return False   # blank or still loading: can't tell, so don't claim success
     if "Are you a robot" in page_text or "Just a moment" in page_text:
         return False
     if db == "sciencedirect":
@@ -186,15 +201,20 @@ def _need_action_response(db: str, action: str) -> list[TextContent]:
              f"[ACTION_REQUIRED: 请使用 AskUserQuestion 询问用户是否已完成操作]")]
 
 
-async def _verify_login(db: str, page) -> bool:
-    """Navigate to db home if needed and verify login status. Returns True if logged in."""
+async def _check_login(db: str, page) -> str:
+    """Open db's home page if needed and report 'ok', 'login' or 'challenge'."""
     try:
-        if urlparse(page.url).netloc != _db_domain(db):
+        if urlparse(page.url).netloc != _db_domain(db) or _is_login_url(page.url):
             await page.goto(get_db(db)["home_url"], wait_until="domcontentloaded", timeout=30000)
-        page_text = await page.evaluate("() => document.body.innerText.slice(0, 5000)")
-        return _is_logged_in(db, page_text)
-    except Exception:
-        return False
+        if _is_login_url(page.url):
+            return "login"
+        text = await page.evaluate("() => document.body.innerText.slice(0, 5000)")
+    except Exception as e:
+        log.debug(f"Login check failed for {db}: {e}")
+        return "login"
+    if "Are you a robot" in text or "Just a moment" in text:
+        return "challenge"
+    return "ok" if _is_logged_in(db, text) else "login"
 
 
 async def _ensure_logged_in(db: str) -> tuple[PwPage | None, list[TextContent] | None]:
@@ -202,8 +222,11 @@ async def _ensure_logged_in(db: str) -> tuple[PwPage | None, list[TextContent] |
     page, err = await _ensure_page(db)
     if err or not page:
         return None, [TextContent(type="text", text=err or "CDP 连接失败")]
-    if await _verify_login(db, page):
+    state = await _check_login(db, page)
+    if state == "ok":
         return page, None
+    if state == "challenge":
+        return None, _need_action_response(db, "显示了 Cloudflare 验证页面。")
     return None, _need_login_response(db)
 
 
@@ -415,52 +438,23 @@ async def call_tool(name: str, args: dict) -> list[TextContent]:
 
 async def handle_login(db: str) -> list[TextContent]:
     """Connect Chrome and check login status for any database."""
-    global _pages
-
     if db not in list_dbs():
         return [TextContent(type="text", text=f"Unknown database: {db}. Available: {DB_LIST}")]
-
-    page, err = await _ensure_page(db)
-    if err or not page:
-        return [TextContent(type="text", text=err or "CDP 连接失败")]
-
-    db_config = get_db(db)
-    label = db_config["label"]
-    home_url = db_config["home_url"]
-    domain = _db_domain(db)
-    if urlparse(page.url).netloc != domain:
-        await page.goto(home_url, wait_until="domcontentloaded", timeout=30000)
-
-    current_url = page.url
-    is_on_login = any(kw in current_url.lower() for kw in ["login", "wayf", "cas", "authserver"])
-
-    logged_in = False
-    if not is_on_login and domain in current_url:
-        try:
-            page_text = await page.evaluate("() => document.body.innerText.slice(0, 5000)")
-            if "Are you a robot" in page_text or "Just a moment" in page_text:
-                return _need_action_response(db, "显示了 Cloudflare 验证页面。")
-            logged_in = _is_logged_in(db, page_text)
-        except Exception as e:
-            log.debug(f"Login check error: {e}")
-            logged_in = True
-
-    if logged_in:
-        _pages[db] = page
-        await _save_cookies()
-        return [TextContent(type="text",
-            text=f"✅ 已连接 {label}。\n"
-                 f"URL: {current_url[:120]}\n"
-                 f"Cookie 已保存，下次启动自动恢复。")]
-    else:
-        return _need_login_response(db)
+    page, err = await _ensure_logged_in(db)
+    if err:
+        return err
+    await _save_cookies()
+    return [TextContent(type="text",
+        text=f"✅ 已连接 {get_db(db)['label']}。\n"
+             f"URL: {page.url[:120]}\n"
+             f"Cookie 已保存，下次启动自动恢复。")]
 
 
 async def handle_search(db: str, args: dict) -> list[TextContent]:
-    """Search papers in IEEE or ScienceDirect."""
-    page, err = await _ensure_logged_in(db)
+    """Search papers in IEEE or ScienceDirect. No login needed."""
+    page, err = await _ensure_page(db)
     if err or not page:
-        return err or _need_login_response(db)
+        return [TextContent(type="text", text=err or "CDP 连接失败")]
 
     adapter = await get_adapter(db, page)
     result = await adapter.search(args["query"], page=args.get("page", 1))
@@ -494,10 +488,10 @@ async def handle_search(db: str, args: dict) -> list[TextContent]:
 
 
 async def handle_detail(db: str, args: dict) -> list[TextContent]:
-    """Get paper details from IEEE or ScienceDirect."""
-    page, err = await _ensure_logged_in(db)
+    """Get paper details from IEEE or ScienceDirect. No login needed."""
+    page, err = await _ensure_page(db)
     if err or not page:
-        return err or _need_login_response(db)
+        return [TextContent(type="text", text=err or "CDP 连接失败")]
 
     adapter = await get_adapter(db, page)
     result = await adapter.detail(args["url"])
@@ -729,8 +723,7 @@ async def handle_status() -> list[TextContent]:
         db = get_db(name)
         if not db:
             continue
-        logged_in = name in _pages
-        marker = " ← logged in" if logged_in else ""
+        marker = " ← 已打开页面" if name in _pages else ""
         lines.append(f"  - `{name}`: {db['label']}{marker}")
 
     if _auth and _auth.is_alive():
