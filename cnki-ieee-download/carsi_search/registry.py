@@ -1,5 +1,12 @@
 """
 Database adapter registry — add new databases here.
+
+Adapting to another institution / account type: edit the three login fields of each
+database. They are checked against the text of the database's home page:
+  logged_in_markers   regexes; if any matches, the user counts as logged in
+  logged_out_markers  regexes; otherwise, if any matches, the user counts as logged out
+                      (no match at all also counts as logged in)
+  login_steps         what the user is told to do in the browser when not logged in
 """
 
 DB_REGISTRY = {
@@ -7,45 +14,43 @@ DB_REGISTRY = {
     "ieee": {
         "name": "ieee",
         "label": "IEEE Xplore",
-        "sp_url": (
-            "https://ieeexplore.ieee.org/servlet/wayf.jsp"
-            "?entityId={entity_id_raw}"
-            "&url=https%3A%2F%2Fieeexplore.ieee.org%2FXplore%2Fhome.jsp"
-        ),
         "home_url": "https://ieeexplore.ieee.org/Xplore/home.jsp",
-        "cookie_accept": [
-            'button:has-text("全部接受")',
-            'button:has-text("Accept All")',
-        ],
-        "target_url_pattern": "**/ieeexplore.ieee.org/Xplore/**",
         "adapter": "carsi_search.databases.ieee:IeeeAdapter",
+        "logged_in_markers": [],
+        "logged_out_markers": ["Institutional Sign In"],
+        "login_steps": [
+            "访问 https://ieeexplore.ieee.org/Xplore/home.jsp",
+            "点击 Institutional Sign In",
+            "完成机构认证",
+        ],
     },
 
     "sciencedirect": {
         "name": "sciencedirect",
         "label": "ScienceDirect (Elsevier)",
-        "sp_url": (
-            "https://auth.elsevier.com/ShibAuth/institutionLogin"
-            "?entityID={entity_id_raw}"
-            "&appReturnURL=https%3A%2F%2Fwww.sciencedirect.com"
-        ),
         "home_url": "https://www.sciencedirect.com/",
-        "cookie_accept": [
-            'button:has-text("Accept All")',
-            'button:has-text("Accept all cookies")',
-            '#onetrust-accept-btn-handler',
-        ],
-        "target_url_pattern": "**/sciencedirect.com/**",
         "adapter": "carsi_search.databases.sciencedirect:ScienceDirectAdapter",
+        "logged_in_markers": ["(?i)institutional access via", "Sign in via"],
+        "logged_out_markers": ["Sign in"],
+        "login_steps": [
+            "访问 https://www.sciencedirect.com",
+            "点击 Sign in → Sign in via your institution",
+            "完成机构认证",
+        ],
     },
 
     "cnki": {
         "name": "cnki",
         "label": "CNKI 知网",
         "home_url": "https://kns.cnki.net/kns8s/search",
-        "cookie_accept": [],
-        "target_url_pattern": "**/cnki.net/**",
         "adapter": "carsi_search.databases.cnki:CnkiAdapter",
+        "logged_in_markers": [],
+        "logged_out_markers": ["机构登录", "校外访问"],
+        "login_steps": [
+            "访问 https://kns.cnki.net",
+            "点击「机构登录」→「校外访问」",
+            "选择学校并完成认证",
+        ],
     },
 }
 

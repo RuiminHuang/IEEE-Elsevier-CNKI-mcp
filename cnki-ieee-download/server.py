@@ -133,48 +133,23 @@ def _is_login_url(url: str) -> bool:
 
 
 def _is_logged_in(db: str, page_text: str) -> bool:
-    """Check if user is logged in based on page text keywords."""
+    """Login state from the page text, using the markers configured in registry.py."""
     if len(page_text.strip()) < MIN_PAGE_TEXT:
         return False   # blank or still loading: can't tell, so don't claim success
     if is_challenge(page_text):
         return False
-    if db == "sciencedirect":
-        has_inst = "institutional access via" in page_text.lower()
-        has_sign_in = "Sign in" in page_text and "Sign in via" not in page_text
-        return has_inst or not has_sign_in
-    elif db == "cnki":
-        return "机构登录" not in page_text and "校外访问" not in page_text
-    else:
-        return "Institutional Sign In" not in page_text
+    cfg = get_db(db)
+    if any(re.search(m, page_text) for m in cfg.get("logged_in_markers", [])):
+        return True
+    return not any(re.search(m, page_text) for m in cfg.get("logged_out_markers", []))
 
 
 def _need_login_response(db: str) -> list[TextContent]:
     """Create standardized login-required response with action prompt."""
     db_config = get_db(db)
     label = db_config["label"] if db_config else db
-    home = db_config["home_url"] if db_config else ""
-
-    guides = {
-        "cnki": (
-            "1. 打开已启动的 Chrome/Edge 浏览器\n"
-            "2. 访问 https://kns.cnki.net\n"
-            "3. 点击「机构登录」→「校外访问」\n"
-            "4. 选择学校并完成认证"
-        ),
-        "sciencedirect": (
-            "1. 打开已启动的 Chrome/Edge 浏览器\n"
-            "2. 访问 https://www.sciencedirect.com\n"
-            "3. 点击 Sign in → Sign in via your institution\n"
-            "4. 完成机构认证"
-        ),
-        "ieee": (
-            "1. 打开已启动的 Chrome/Edge 浏览器\n"
-            f"2. 访问 {home}\n"
-            "3. 点击 Institutional Sign In\n"
-            "4. 完成机构认证"
-        ),
-    }
-    steps = guides.get(db, guides["ieee"])
+    all_steps = ["打开已启动的 Chrome/Edge 浏览器"] + (db_config or {}).get("login_steps", [])
+    steps = "\n".join(f"{i}. {s}" for i, s in enumerate(all_steps, 1))
 
     return [TextContent(type="text",
         text=f"⚠️ 需要登录 {label}\n\n"
@@ -905,7 +880,7 @@ async def handle_cnki_download(args: dict) -> list[TextContent]:
     await asyncio.sleep(1)
 
     page_text = await page.evaluate("() => document.body.innerText.slice(0, 3000)")
-    if "机构登录" in page_text or "校外访问" in page_text:
+    if not _is_logged_in("cnki", page_text):
         return _need_login_response("cnki")
 
     captcha = await page.evaluate("""() => {
