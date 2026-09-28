@@ -249,16 +249,20 @@ class CnkiAdapter(BaseAdapter):
         return f"排序失败：#{sort_id} 没有切换到降序"
 
     async def _go_to_page(self, target: int) -> str | None:
-        """Page forward until target: click its page link if shown, else 下一页.
-        Returns error message or None."""
+        """Page forward until target, each step jumping to the highest visible page link
+        that is not past target (下一页 only when no such link). Returns error message or None."""
         for _ in range(self.MAX_PAGE_STEPS):
             current = await self._current_page()
             if current == target:
                 return None
             if current is None or current > target:
                 return f"翻页失败：无法确定当前页码（当前 {current}，目标 {target}）"
-            link = self.page.locator(f'a[data-curpage="{target}"]').first
-            if await link.count() == 0:
+            nums = await self.page.evaluate(
+                "() => Array.from(document.querySelectorAll('a[data-curpage]')).map(a => +a.dataset.curpage)")
+            ahead = [n for n in nums if current < n <= target]
+            if ahead:
+                link = self.page.locator(f'a[data-curpage="{max(ahead)}"]').first
+            else:
                 link = self.page.locator('#PageNext, #Page_next_top, a:has-text("下一页")').first
                 if await link.count() == 0:
                     return f"翻页失败：没有第 {target} 页"
@@ -369,7 +373,9 @@ class CnkiAdapter(BaseAdapter):
                     : [];
                 const fund = document.querySelector('p.funds')?.innerText?.trim() || '';
                 const classification = document.querySelector('.clc-code')?.innerText?.trim() || '';
-                const journal = document.querySelector('.doc-top')?.querySelector('a')?.innerText?.trim() || '';
+                // live pages render the source as "刊名 ." — drop the trailing dot
+                const journal = (document.querySelector('.doc-top')?.querySelector('a')?.innerText || '')
+                    .replace(/\\s*\\.\\s*$/, '').trim();
                 const pubInfo = document.querySelector('.head-time')?.innerText?.trim() || '';
                 const doi = document.querySelector('.top-tip span a[href*="doi.org"]')?.innerText?.trim() || '';
                 const isOnlineFirst = !!brief.querySelector('.icon-shoufa');

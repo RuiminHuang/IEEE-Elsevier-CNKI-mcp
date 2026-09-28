@@ -32,6 +32,7 @@ class FakeState:
     logged_in: dict = field(default_factory=lambda: {"ieee": True, "sciencedirect": True, "cnki": True})
     delays: dict = field(default_factory=dict)   # URL substring -> seconds before responding
     cnki_delay_ms: int = 1200                    # CNKI AJAX refresh delay
+    cnki_total_pages: int = 10
     cnki_captcha: bool = False
     sd_challenge: str = ""   # "", "cloudflare" or "elsevier" (page shown on the PDF domain)
     busy_network: bool = False   # inject BUSY_SCRIPT into every HTML page
@@ -232,7 +233,7 @@ SORTS = ("<ul id='orderList' class='order'>"
 _CNKI_GRID = """
 <div id="gridTable"></div>
 <script>
-const TOTAL_PAGES = 10, DELAY = __DELAY__;
+const TOTAL_PAGES = __TOTAL__, DELAY = __DELAY__;
 const state = {q: '', page: 1, sort: 'PT', dir: 'DESC'};
 function render() {
   document.querySelectorAll('#orderList li').forEach(li => {
@@ -276,7 +277,8 @@ CNKI_PRO_SEARCH = "<textarea class='search-input'></textarea><input class='searc
 
 
 def _cnki_detail_body(title: str, links: str) -> str:
-    return (f"<div class='brief'><h1>{title} 网络首发</h1>"
+    return ("<div class='doc-top'><a>测试期刊 .</a></div>"   # live pages show "刊名 ."
+            f"<div class='brief'><h1>{title} 网络首发</h1>"
             "<h3 class='author'><a>张三1</a><a>李四2</a></h3>"
             "<h3 class='author'><a>测试大学</a></h3><span class='icon-shoufa'></span></div>"
             "<div class='abstract-text'>这是摘要。</div>"
@@ -288,7 +290,8 @@ def _cnki(path, q, st):
     header = ("<div>Test University 欢迎您 <a>退出</a></div>" if st.logged_in["cnki"]
               else "<a>机构登录</a><a>校外访问</a>")
     captcha = CAPTCHA if st.cnki_captcha else HIDDEN_CAPTCHA
-    grid = lambda html: html.replace("__DELAY__", str(st.cnki_delay_ms))
+    grid = lambda html: (html.replace("__DELAY__", str(st.cnki_delay_ms))
+                         .replace("__TOTAL__", str(st.cnki_total_pages)))
     if path.startswith("/kns8s/AdvSearch"):
         return 200, "text/html", _html(header + captcha + grid(CNKI_PRO_SEARCH))
     if path.startswith("/kns8s/search"):

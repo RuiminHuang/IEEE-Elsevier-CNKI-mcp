@@ -852,7 +852,7 @@ async def handle_cnki_search(args: dict) -> list[TextContent]:
     for i, p in enumerate(papers):
         text += f"[{i+1}] **{p.get('title', '?')}**\n"
         if p.get("authors"): text += f"    作者: {p['authors']}\n"
-        if p.get("journal"): text += f"    期刊: {p['journal']}\n"
+        if p.get("journal"): text += f"    来源: {p['journal']}\n"   # journal, or university for theses
         if p.get("date"): text += f"    日期: {p['date']}\n"
         if p.get("citations"): text += f"    引用: {p['citations']}\n"
         if p.get("url"): text += f"    URL: {p['url']}\n"
@@ -879,7 +879,7 @@ async def handle_cnki_detail(args: dict) -> list[TextContent]:
     if result.get("title"): text += f"**{result['title']}**\n\n"
     if result.get("authors"): text += f"**作者**: {', '.join(result['authors'])}\n"
     if result.get("affiliations"): text += f"**单位**: {', '.join(result['affiliations'])}\n"
-    if result.get("journal"): text += f"**期刊**: {result['journal']}\n"
+    if result.get("journal"): text += f"**来源**: {result['journal']}\n"
     if result.get("pubInfo"): text += f"**出版信息**: {result['pubInfo']}\n"
     if result.get("doi"): text += f"**DOI**: {result['doi']}\n"
     if result.get("abstract"): text += f"\n**摘要**\n{result['abstract']}\n"

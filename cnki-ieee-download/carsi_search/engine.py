@@ -72,10 +72,12 @@ def _cdp_port() -> str:
 
 
 def _is_cdp_available() -> bool:
-    """Quick check if CDP port is already listening."""
+    """Quick check if CDP port is already listening. Bypasses any system proxy: a local
+    port must not depend on a proxy app running (or on it forwarding 127.0.0.1)."""
     import urllib.request
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(f"{CDP_URL}/json/version", timeout=2) as r:
+        with opener.open(f"{CDP_URL}/json/version", timeout=2) as r:
             return r.status == 200
     except Exception:
         return False
