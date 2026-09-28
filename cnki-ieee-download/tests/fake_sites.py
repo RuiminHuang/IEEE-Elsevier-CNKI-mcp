@@ -22,6 +22,9 @@ FILLER = "<p>" + "Lorem ipsum dolor sit amet. " * 20 + "</p>"
 PDF_BYTES = b"%PDF-1.4\n% fake paper\n" + b"0" * 2048 + b"\n%%EOF\n"
 CAJ_BYTES = b"CAJ\x00fake caj " + b"1" * 2048
 SLOW_BYTES = b"%PDF-1.4\n" + b"s" * 600_000
+BIG_PDF_BYTES = b"%PDF-1.4\n" + bytes(range(256)) * 24_000   # ~6 MB, every byte value
+# Keeps a page from ever reaching "network idle", like the analytics on the live sites.
+BUSY_SCRIPT = "<script>setInterval(() => fetch('/__ping?' + Date.now()).catch(() => {}), 250)</script>"
 
 
 @dataclass
@@ -31,6 +34,8 @@ class FakeState:
     cnki_delay_ms: int = 1200                    # CNKI AJAX refresh delay
     cnki_captcha: bool = False
     sd_challenge: str = ""   # "", "cloudflare" or "elsevier" (page shown on the PDF domain)
+    busy_network: bool = False   # inject BUSY_SCRIPT into every HTML page
+    big_pdf: bool = False        # IEEE getPDF returns BIG_PDF_BYTES
     requests: list = field(default_factory=list)
     connections: int = 0
 
@@ -47,6 +52,8 @@ async def install(context, state: FakeState):
             if key in url:
                 await asyncio.sleep(secs)
         status, ctype, body = _respond(route.request, state)
+        if state.busy_network and ctype.startswith("text/html") and isinstance(body, str):
+            body = body.replace("</body>", BUSY_SCRIPT + "</body>")
         try:
             await route.fulfill(status=status, content_type=ctype, body=body)
         except Exception:
@@ -58,6 +65,8 @@ async def install(context, state: FakeState):
 def _respond(request, st: FakeState):
     u = urlparse(request.url)
     q = {k: v[0] for k, v in parse_qs(u.query).items()}
+    if u.path == "/__ping":
+        return 204, "text/plain", ""
     if u.netloc == "ieeexplore.ieee.org":
         return _ieee(request, u.path, q, st)
     if u.netloc == "www.sciencedirect.com":
@@ -126,7 +135,7 @@ def _ieee(request, path, q, st):
     if path.startswith("/stampPDF/getPDF.jsp"):
         if not st.logged_in["ieee"]:
             return 200, "text/html", _html("<h1>Sign in to access this document</h1>")
-        return 200, "application/pdf", PDF_BYTES
+        return 200, "application/pdf", BIG_PDF_BYTES if st.big_pdf else PDF_BYTES
     return 200, "text/html", _html(f"{header}<div>IEEE Xplore home</div>")
 
 

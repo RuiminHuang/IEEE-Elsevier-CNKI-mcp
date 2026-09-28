@@ -2,9 +2,8 @@
 ScienceDirect (Elsevier) database adapter.
 """
 
-import asyncio
 from urllib.parse import quote
-from .base import BaseAdapter, year_range
+from .base import CHALLENGE_MARKERS, BaseAdapter, is_challenge, year_range
 
 
 class ScienceDirectAdapter(BaseAdapter):
@@ -24,25 +23,20 @@ class ScienceDirectAdapter(BaseAdapter):
         search_url = self.build_search_url(query, int(kwargs.get("page") or 1),
                                            kwargs.get("year_start"), kwargs.get("year_end"))
         await self._navigate(search_url)
-        await asyncio.sleep(4)
 
-        # 检测 Cloudflare 验证码，等待用户手动完成
-        captcha_result = await self._check_and_notify_captcha()
-        if captcha_result:
-            return captcha_result
-
-        # 等搜索结果加载（标题链接）
+        # Return as soon as either the results or a bot check shows up.
         try:
-            await self.page.wait_for_selector(
-                'a[href*="/science/article/pii/"]', timeout=20000
-            )
-            await asyncio.sleep(1)
+            handle = await self.page.wait_for_function(
+                r"""(markers) => {
+                    if (document.querySelector('a.result-list-title-link')) return 'results';
+                    const t = (document.body?.innerText || '').toLowerCase();
+                    return markers.some(m => t.includes(m)) ? 'challenge' : null;
+                }""", arg=list(CHALLENGE_MARKERS), timeout=20000)
+            state = await handle.json_value()
         except Exception:
-            # 可能验证码又出现了
-            captcha_result = await self._check_and_notify_captcha()
-            if captcha_result:
-                return captcha_result
             return {"success": False, "error": "timeout — 搜索结果未加载，可能页面结构变化"}
+        if state == "challenge":
+            return {"success": False, "error": "captcha"}
 
         # One entry per li.ResultItem, in page order (structure: tests/fixtures/sd_search_items.html).
         # Fields are read from their own elements: textContent of a whole item glues words
@@ -133,18 +127,11 @@ class ScienceDirectAdapter(BaseAdapter):
         return {"success": True, **data}
 
     async def _check_bot_challenge(self) -> bool:
-        """检测 Cloudflare bot 验证页面。"""
+        """检测 Cloudflare / Elsevier 的 bot 验证页面。"""
         try:
-            text = await self.page.evaluate(
-                "() => document.body?.innerText?.slice(0, 1000) || ''"
-            )
-            if "Are you a robot" in text:
-                return True
-            if "Just a moment" in text and ("challenge" in text.lower() or "checking" in text.lower()):
-                return True
+            return is_challenge(await self.page.evaluate("() => document.body?.innerText?.slice(0, 1000) || ''"))
         except Exception:
-            pass
-        return False
+            return False
 
     async def _check_and_notify_captcha(self) -> dict | None:
         """检测 Cloudflare 验证码，检测到立即返回错误（不等待）。返回 None 表示无验证码。"""

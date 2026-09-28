@@ -8,6 +8,17 @@ from datetime import datetime
 from playwright.async_api import Page
 
 
+# Bot checks in page text: Cloudflare ("Just a moment", "Are you a robot") and Elsevier's
+# own "Security verification" page on pdf.sciencedirectassets.com, whose body reads
+# "Request Verification: In Progress".
+CHALLENGE_MARKERS = ("are you a robot", "just a moment", "request verification")
+
+
+def is_challenge(page_text: str) -> bool:
+    text = (page_text or "").lower()
+    return any(m in text for m in CHALLENGE_MARKERS)
+
+
 def normalize_year(value) -> str:
     """'2020年' / 2020 / ' 2020 ' -> '2020'; empty when no year given."""
     return re.sub(r"\D", "", str(value or ""))[:4]
@@ -35,8 +46,6 @@ class BaseAdapter:
         raise NotImplementedError
 
     async def _navigate(self, url: str, timeout: int = 30000):
+        """Go to url. Callers then wait for the element or response they actually need;
+        waiting for "network idle" cost ~10 s per call on sites whose analytics never go idle."""
         await self.page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-        try:
-            await self.page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            pass

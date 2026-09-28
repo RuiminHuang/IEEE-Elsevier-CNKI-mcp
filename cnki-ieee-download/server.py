@@ -32,7 +32,7 @@ from mcp.types import Tool, TextContent
 
 from carsi_search.engine import CarsiAuth, log
 from carsi_search.registry import list_dbs, get_db, get_adapter
-from carsi_search.databases.base import year_range
+from carsi_search.databases.base import is_challenge, year_range
 from carsi_search.databases.cnki import CnkiAdapter
 
 from playwright.async_api import Page as PwPage
@@ -130,15 +130,6 @@ async def _ensure_page(db: str):
 _LOGIN_HOST_PREFIXES = ("login.", "idp.", "ids.", "fsso.", "auth.", "cas.", "sso.")
 _LOGIN_PATH_WORDS = ("login", "wayf", "authserver", "/cas/", "/idp/", "/sso", "shibauth")
 MIN_PAGE_TEXT = 100   # less text than this means the page hasn't rendered yet
-# Bot checks in page text: Cloudflare ("Just a moment", "Are you a robot") and Elsevier's
-# own "Security verification" page on pdf.sciencedirectassets.com, whose body reads
-# "Request Verification: In Progress".
-_CHALLENGE_MARKERS = ("are you a robot", "just a moment", "request verification")
-
-
-def _is_challenge(page_text: str) -> bool:
-    text = page_text.lower()
-    return any(m in text for m in _CHALLENGE_MARKERS)
 
 
 def _is_login_url(url: str) -> bool:
@@ -153,7 +144,7 @@ def _is_logged_in(db: str, page_text: str) -> bool:
     """Check if user is logged in based on page text keywords."""
     if len(page_text.strip()) < MIN_PAGE_TEXT:
         return False   # blank or still loading: can't tell, so don't claim success
-    if _is_challenge(page_text):
+    if is_challenge(page_text):
         return False
     if db == "sciencedirect":
         has_inst = "institutional access via" in page_text.lower()
@@ -222,7 +213,7 @@ async def _check_login(db: str, page) -> str:
     except Exception as e:
         log.debug(f"Login check failed for {db}: {e}")
         return "login"
-    if _is_challenge(text):
+    if is_challenge(text):
         return "challenge"
     return "ok" if _is_logged_in(db, text) else "login"
 
@@ -584,33 +575,22 @@ def _ieee_pdf_url(url: str) -> str:
 
 CHALLENGE_GRACE_SECONDS = 15   # how long a download waits for Cloudflare before asking the user
 
-_FETCH_PDF_JS = """
+# Fetch a URL (null = the current page) inside the page, so the browser's cookies apply,
+# and return the body as base64. FileReader does the encoding natively; building a
+# binary string byte by byte took seconds for large PDFs.
+_FETCH_AS_BASE64_JS = """
     async (targetUrl) => {
         try {
-            const resp = await fetch(targetUrl);
+            const resp = await fetch(targetUrl || window.location.href);
             if (!resp.ok) return 'HTTP ' + resp.status;
-            const buf = await resp.arrayBuffer();
-            const bytes = new Uint8Array(buf);
-            let binary = '';
-            for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-            return btoa(binary);
-        } catch(e) {
-            return 'ERROR:' + e.message;
-        }
-    }
-"""
-
-_FETCH_CURRENT_PAGE_JS = """
-    async () => {
-        try {
-            const resp = await fetch(window.location.href);
-            if (!resp.ok) return 'HTTP ' + resp.status;
-            const buf = await resp.arrayBuffer();
-            const bytes = new Uint8Array(buf);
-            let binary = '';
-            for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-            return btoa(binary);
-        } catch(e) {
+            const blob = await resp.blob();
+            return await new Promise(resolve => {
+                const fr = new FileReader();
+                fr.onload = () => resolve(String(fr.result).split(',', 2)[1] || '');
+                fr.onerror = () => resolve('ERROR:' + fr.error);
+                fr.readAsDataURL(blob);
+            });
+        } catch (e) {
             return 'ERROR:' + e.message;
         }
     }
@@ -623,38 +603,35 @@ async def _sd_navigate_and_fetch(page, url: str) -> str | None:
     Cloudflare verification can destroy the execution context. After user completes
     the challenge manually, the page reloads — we wait and retry evaluate.
     """
-    try:
-        await page.unroute("**/*")
-    except Exception:
-        pass
-
     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    for _ in range(20):
-        await asyncio.sleep(1)
+    for _ in range(80):   # up to 20 s for the redirect to the PDF host
         if "sciencedirectassets" in page.url:
             break
+        await asyncio.sleep(0.25)
 
     # Give Cloudflare a short grace period; if it still blocks, hand over to the user
     # (ACTION_REQUIRED) instead of holding the tool call for minutes.
     deadline = time.monotonic() + CHALLENGE_GRACE_SECONDS
+    challenged = False
     while True:
         try:
             page_text = await page.evaluate("() => document.body?.innerText?.slice(0, 500) || ''")
         except Exception:
             page_text = "just a moment"   # context destroyed mid-challenge; keep waiting
-        if not _is_challenge(page_text):
+        if not is_challenge(page_text):
             break
+        challenged = True
         if time.monotonic() > deadline:
             return None
         await asyncio.sleep(1)
 
-    # Wait for page to stabilize after Cloudflare pass
-    await asyncio.sleep(2)
+    if challenged:
+        await asyncio.sleep(2)   # let the page settle after the challenge passed
 
     # Retry evaluate with resilience to context destruction
     for retry in range(3):
         try:
-            return await page.evaluate(_FETCH_CURRENT_PAGE_JS)
+            return await page.evaluate(_FETCH_AS_BASE64_JS, None)
         except Exception as e:
             if retry < 2:
                 log.debug(f"SD fetch retry {retry+1}: {e}")
@@ -780,7 +757,7 @@ async def handle_download(db: str, args: dict) -> list[TextContent]:
             await page.unroute("**/*")
         except Exception:
             pass
-        pdf_b64 = await page.evaluate(_FETCH_PDF_JS, url)
+        pdf_b64 = await page.evaluate(_FETCH_AS_BASE64_JS, url)
 
     if not pdf_b64 or pdf_b64.startswith('ERROR:') or pdf_b64.startswith('HTTP '):
         await page.goto(
