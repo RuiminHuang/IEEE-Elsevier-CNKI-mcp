@@ -1,15 +1,68 @@
 """
 IEEE Xplore database adapter.
+
+Search reads the JSON the results page itself requests (POST /rest/search);
+detail reads window.xplGlobal.document.metadata embedded in document pages.
+Both are structured data, so no DOM selectors are needed.
 """
 
-import asyncio
+import re
 from urllib.parse import quote
+
 from .base import BaseAdapter
+
+_MARKUP = re.compile(r"\[::|::\]|<[^>]+>")   # search highlights "[::radar::]" and inline HTML
+_SKIP_KEYWORD_TYPES = {"Index Terms"}         # long machine-generated list
+
+
+def _clean(value) -> str:
+    return re.sub(r"\s+", " ", _MARKUP.sub("", str(value or ""))).strip()
+
+
+def parse_search_record(rec: dict) -> dict:
+    """One record of the /rest/search response -> paper dict for server.handle_search."""
+    number = str(rec.get("articleNumber") or "")
+    names = [_clean(a.get("preferredName") or a.get("normalizedName")) for a in rec.get("authors") or []]
+    return {
+        "title": _clean(rec.get("articleTitle")),
+        "url": f"https://ieeexplore.ieee.org/document/{number}/" if number else "",
+        "authors": "; ".join(n for n in names if n),
+        "year": _clean(rec.get("publicationYear")),
+        "source": _clean(rec.get("publicationTitle")),
+        "abstract": _clean(rec.get("abstract"))[:300],
+    }
+
+
+def parse_metadata(meta: dict) -> dict:
+    """xplGlobal.document.metadata -> detail dict for server.handle_detail."""
+    keywords = []
+    for group in meta.get("keywords") or []:
+        if group.get("type") in _SKIP_KEYWORD_TYPES:
+            continue
+        for k in group.get("kwd") or []:
+            if _clean(k) and _clean(k) not in keywords:
+                keywords.append(_clean(k))
+    pdf = meta.get("pdfUrl") or ""
+    return {
+        "title": _clean(meta.get("title") or meta.get("displayDocTitle")),
+        "authors": [_clean(a.get("name")) for a in meta.get("authors") or [] if a.get("name")],
+        "abstract": _clean(meta.get("abstract")),
+        "doi": _clean(meta.get("doi")),
+        "venue": _clean(meta.get("publicationTitle")),
+        "year": _clean(meta.get("publicationYear")),
+        "volume": _clean(meta.get("volume")),
+        "pages": "-".join(p for p in (_clean(meta.get("startPage")), _clean(meta.get("endPage"))) if p),
+        "issn": ", ".join(_clean(i.get("value")) for i in meta.get("issn") or [] if i.get("value")),
+        "pubDate": _clean(meta.get("publicationDate") or meta.get("conferenceDate")),
+        "keywords": keywords,
+        "pdfUrl": "https://ieeexplore.ieee.org" + pdf if pdf.startswith("/") else pdf,
+    }
 
 
 class IeeeAdapter(BaseAdapter):
     name = "ieee"
     home_url = "https://ieeexplore.ieee.org/"
+    PAGE_SIZE = 25
 
     @staticmethod
     def build_search_url(query: str, page: int = 1) -> str:
@@ -20,122 +73,34 @@ class IeeeAdapter(BaseAdapter):
 
     async def search(self, query: str, **kwargs) -> dict:
         page_num = int(kwargs.get("page") or 1)
-        search_url = self.build_search_url(query, page_num)
-        await self._navigate(search_url)
-        await asyncio.sleep(4)
+        url = self.build_search_url(query, page_num)
+        try:
+            async with self.page.expect_response(
+                    lambda r: "/rest/search" in r.url and r.request.method == "POST",
+                    timeout=30000) as info:
+                await self._navigate(url)
+            data = await (await info.value).json()
+        except Exception as e:
+            return {"success": False, "error": f"IEEE 搜索接口没有返回结果（可能出现了验证页）: {e}"}
 
-        for t in ["Accept All", "Accept all", "全部接受"]:
-            try:
-                b = self.page.locator(f'button:has-text("{t}")').first
-                if await b.is_visible(timeout=1500):
-                    await b.click()
-                    await asyncio.sleep(1)
-                    await self._navigate(search_url)
-                    await asyncio.sleep(3)
-                    break
-            except Exception:
-                pass
-
-        result = await self.page.evaluate("""
-            () => {
-                const items = document.querySelectorAll('.List-results-items .result-item');
-                const papers = Array.from(items).slice(0, 30).map(item => {
-                    const a = item.querySelector('h3 a, h2 a, [class*="title"] a');
-                    const au = item.querySelector('[class*="author"]');
-                    const yr = item.querySelector('[class*="year"]');
-                    const ab = item.querySelector('[class*="abstract"], .description');
-                    const url = a?.href || '';
-                    const arnumber = (url.match(/document\\/(\\d+)/) || [])[1] || '';
-                    return {
-                        title: a?.textContent?.trim() || '',
-                        url,
-                        authors: (au?.textContent || '').trim().replace(/\\s+/g, ' '),
-                        year: (yr?.textContent?.match(/\\d{4}/) || [])[0] || '',
-                        abstract: (ab?.textContent || '').trim().substring(0, 300),
-                        pdfUrl: arnumber ? 'https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=' + arnumber : '',
-                    };
-                }).filter(p => p.title);
-
-                const body = document.body?.innerText || '';
-                const totalMatch = body.match(/([\\d,]+)\\s*[Rr]esults/);
-                const total = totalMatch ? totalMatch[1] : '';
-                const rangeMatch = body.match(/Showing\\s+([\\d,]+)\\s*-\\s*([\\d,]+)\\s+of/i);
-
-                return { success: true, total, papers, rangeStart: rangeMatch ? rangeMatch[1] : '' };
-            }
-        """)
-
-        if page_num > 1 and result.get("rangeStart") == "1":
-            return {"success": False, "error": f"翻页未生效：请求第 {page_num} 页，页面仍显示第 1 页"}
-        return result
+        start = data.get("startRecord")   # 0-based
+        per_page = data.get("recordsPerPage") or self.PAGE_SIZE
+        if page_num > 1 and isinstance(start, int) and start < (page_num - 1) * per_page:
+            return {"success": False, "error": f"翻页未生效：请求第 {page_num} 页，接口返回的是第 1 页"}
+        total = data.get("totalRecords")
+        return {
+            "success": True,
+            "total": f"{total:,}" if isinstance(total, int) else str(total or ""),
+            "papers": [parse_search_record(r) for r in data.get("records") or []],
+        }
 
     async def detail(self, url: str, **kwargs) -> dict:
         await self._navigate(url)
-
         try:
-            show_more = await self.page.query_selector(
-                'button.more-less-btn, button[data-testid="abstract-more"], '
-                '[class*="abstract"] button, [class*="show-more"], '
-                'button:has-text("Show More Metadata"), button:has-text("Show More")'
-            )
-            if show_more:
-                await show_more.click()
-                await self.page.wait_for_timeout(500)
+            await self.page.wait_for_function(
+                "() => !!(window.xplGlobal && xplGlobal.document && xplGlobal.document.metadata)",
+                timeout=20000)
         except Exception:
-            pass
-
-        data = await self.page.evaluate("""
-            () => {
-                const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
-
-                const title = norm(document.querySelector('h1')?.textContent
-                    || document.querySelector('.document-title')?.textContent);
-
-                const authors = Array.from(
-                    document.querySelectorAll('.authors-info a, .author a, [class*="author"] a')
-                ).map(a => norm(a.textContent)).filter(Boolean);
-
-                const abstractEl = document.querySelector('div.abstract-text-content, .abstract-text, .article-abstract');
-                let abstract = '';
-                if (abstractEl) {
-                    const clone = abstractEl.cloneNode(true);
-                    clone.querySelectorAll('.MathJax, .MathJax_Display, script, .mjx-math, .katex-html').forEach(el => el.remove());
-                    abstract = norm(clone.textContent);
-                }
-
-                const doi = norm(
-                    document.querySelector('.stats-document-abstract-doi, [class*="doi"] a')?.textContent
-                );
-
-                const keywords = Array.from(
-                    document.querySelectorAll('.keyword a, .keywords a, [class*="keyword"] a')
-                ).map(a => norm(a.textContent)).filter(Boolean);
-
-                // 期刊/会议名
-                const venue = norm(
-                    document.querySelector('.publication-title a, [class*="publication-title"], [class*="stats-document"] a[href*="publication"]')?.textContent
-                );
-
-                // 卷号、页码
-                const statsText = norm(document.querySelector('.abstract-stats, [class*="doc-abstract"]')?.textContent || '');
-                const volume = (statsText.match(/[Vv]olume[:\\s]*(\\S+)/) || [])[1] || '';
-                const pages = (statsText.match(/[Pp]ages[:\\s]*(\\S+)/) || [])[1] || '';
-
-                // ISSN
-                const issn = norm(
-                    document.querySelector('a[href*="issn"], [class*="issn"]')?.textContent
-                );
-
-                // 发表日期
-                const pubDate = norm(
-                    document.querySelector('[class*="doc-abstract"] .u-pb-1, .published-date, [class*="date"]')?.textContent
-                );
-
-                const pdfLink = document.querySelector('a[href*="stamp.jsp"], a[href*="pdf"], .pdf-link a');
-                const pdfUrl = pdfLink?.href || '';
-
-                return { title, authors, abstract, doi, keywords, pdfUrl, venue, volume, pages, issn, pubDate };
-            }
-        """)
-
-        return {"success": True, **data}
+            return {"success": False, "error": "IEEE 详情页没有加载出论文元数据（xplGlobal.document.metadata）"}
+        meta = await self.page.evaluate("() => xplGlobal.document.metadata")
+        return {"success": True, **parse_metadata(meta)}

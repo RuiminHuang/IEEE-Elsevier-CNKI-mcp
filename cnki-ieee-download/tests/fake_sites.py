@@ -5,11 +5,15 @@ context.route(), so the adapters keep navigating to their real URLs.
 """
 
 import asyncio
+import json
 import re
 import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 FAKE_HOSTS = re.compile(
     r"^https://(ieeexplore\.ieee\.org|www\.sciencedirect\.com|pdf\.sciencedirectassets\.com|kns\.cnki\.net)/"
@@ -42,7 +46,7 @@ async def install(context, state: FakeState):
         for key, secs in state.delays.items():
             if key in url:
                 await asyncio.sleep(secs)
-        status, ctype, body = _respond(url, state)
+        status, ctype, body = _respond(route.request, state)
         try:
             await route.fulfill(status=status, content_type=ctype, body=body)
         except Exception:
@@ -51,11 +55,11 @@ async def install(context, state: FakeState):
     await context.route(FAKE_HOSTS, handler)
 
 
-def _respond(url: str, st: FakeState):
-    u = urlparse(url)
+def _respond(request, st: FakeState):
+    u = urlparse(request.url)
     q = {k: v[0] for k, v in parse_qs(u.query).items()}
     if u.netloc == "ieeexplore.ieee.org":
-        return _ieee(u.path, q, st)
+        return _ieee(request, u.path, q, st)
     if u.netloc == "www.sciencedirect.com":
         return _sd(u.path, q, st)
     if u.netloc == "pdf.sciencedirectassets.com":
@@ -70,29 +74,55 @@ def _respond(url: str, st: FakeState):
 
 
 # ── IEEE ──
+# Mirrors the live site: the results page fetches its data with POST /rest/search
+# (JSON body, "ranges": ["2020_2022_Year"]); document pages embed xplGlobal.document.metadata.
+# Record and metadata shapes come from the real snapshots in fixtures/.
 
-def _ieee(path, q, st):
+IEEE_SEARCH = json.loads((FIXTURES / "ieee_search.json").read_text(encoding="utf-8"))
+IEEE_META = json.loads((FIXTURES / "ieee_metadata.json").read_text(encoding="utf-8"))
+_IEEE_RESULTS_PAGE = """<div class='List-results-items'></div>
+<script>
+const p = new URLSearchParams(location.search);
+const body = {newsearch: true, queryText: p.get('queryText') || '', highlight: true, returnType: 'SEARCH'};
+if (+p.get('pageNumber') > 1) body.pageNumber = +p.get('pageNumber');
+if (p.get('ranges')) body.ranges = [p.get('ranges')];
+fetch('/rest/search', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+</script>"""
+
+
+def _ieee_search_api(post_data):
+    body = json.loads(post_data or "{}")
+    page = int(body.get("pageNumber") or 1)
+    lo = hi = 2023
+    for r in body.get("ranges") or []:
+        m = re.match(r"(\d{4})_(\d{4})_Year", r)
+        if m:
+            lo, hi = int(m.group(1)), int(m.group(2))
+    records = []
+    for i in range(1, 4):
+        rec = dict(IEEE_SEARCH["records"][0])
+        rec.update(articleTitle=f"IEEE P{page} Paper {i}", articleNumber=f"{page}00{i}",
+                   documentLink=f"/document/{page}00{i}/", publicationYear=str(lo + (i - 1) % (hi - lo + 1)))
+        records.append(rec)
+    return {**IEEE_SEARCH, "records": records, "totalRecords": 1234,
+            "startRecord": (page - 1) * 25, "recordsPerPage": 25}
+
+
+def _ieee(request, path, q, st):
     header = ("<div>Access provided by: Test University <a>Sign Out</a></div>"
               if st.logged_in["ieee"] else "<a>Institutional Sign In</a>")
     if path.startswith("/search/searchresult.jsp"):
-        page = int(q.get("pageNumber", "1"))
-        start = (page - 1) * 25 + 1
-        items = "".join(
-            f"<div class='result-item'><h3><a href='https://ieeexplore.ieee.org/document/{page}00{i}/'>"
-            f"IEEE P{page} Paper {i}</a></h3><p class='author'>Author {i}</p>"
-            f"<span class='year'>Year: 2023</span><div class='description'>Abstract {i}</div></div>"
-            for i in range(1, 4))
-        body = (f"{header}<div>Showing {start}-{start + 24} of 1,234 results for {q.get('queryText', '')}</div>"
-                f"<div class='List-results-items'>{items}</div>")
-        return 200, "text/html", _html(body)
+        return 200, "text/html", _html(header + _IEEE_RESULTS_PAGE)
+    if path == "/rest/search" and request.method == "POST":
+        return 200, "application/json", json.dumps(_ieee_search_api(request.post_data))
     m = re.match(r"/document/(\d+)", path)
     if m:
         doc = m.group(1)
-        body = (f"{header}<h1 class='document-title'>IEEE Doc {doc}</h1>"
-                f"<div class='authors-info'><a>Alice</a></div>"
-                f"<div class='abstract-text'>Abstract of {doc}</div>"
-                f"<a href='https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber={doc}'>PDF</a>")
-        return 200, "text/html", _html(body)
+        meta = {**IEEE_META, "title": f"IEEE Doc {doc}", "abstract": f"Abstract of {doc}",
+                "pdfUrl": f"/stamp/stamp.jsp?tp=&arnumber={doc}", "articleNumber": doc}
+        script = ("<script>window.xplGlobal = {document: {metadata: %s}};</script>"
+                  % json.dumps(meta).replace("</", "<\\/"))
+        return 200, "text/html", _html(f"{header}<h1 class='document-title'>IEEE Doc {doc}</h1>{script}")
     if path.startswith("/stampPDF/getPDF.jsp"):
         if not st.logged_in["ieee"]:
             return 200, "text/html", _html("<h1>Sign in to access this document</h1>")
