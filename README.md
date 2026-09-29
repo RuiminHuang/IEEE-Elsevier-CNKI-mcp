@@ -53,7 +53,7 @@ claude mcp add cnki-ieee-download -- python <克隆目录>/cnki-ieee-download/se
 | `sciencedirect_login` | 连接浏览器，检测 ScienceDirect 登录状态 |
 | `sciencedirect_search` | 搜索 ScienceDirect 论文（无需登录）；支持 `page`、`year_start`/`year_end`，标出每篇是否可下载 |
 | `sciencedirect_detail` | 获取 ScienceDirect 论文详情（无需登录），附带标题和带标题的下载命令 |
-| `sciencedirect_download` | 下载 ScienceDirect PDF（需登录）：先打开文章页，取文章自己的 "View PDF" 链接再打开；遇到安全验证会请你手动完成 |
+| `sciencedirect_download` | 下载 ScienceDirect PDF（需登录）：在文章页点击 "View PDF"，从新打开的标签页取得 PDF，完成后关闭该标签页；遇到安全验证会保留验证页并请你手动完成 |
 | `cnki_search` | 搜索 CNKI（无需登录），支持 `page`、`sort`；可选 `author`/`journal`/`year_start`/`year_end` 触发专业检索 |
 | `cnki_login` | 检测 CNKI 登录状态 |
 | `cnki_detail` | 获取 CNKI 论文详情（无需登录） |
@@ -81,7 +81,7 @@ claude mcp add cnki-ieee-download -- python <克隆目录>/cnki-ieee-download/se
 | 英文学术论文搜索/详情 | IEEE Xplore | 读取搜索页自己请求的接口 JSON（`/rest/search`）和页面元数据（`xplGlobal.document.metadata`） |
 | IEEE PDF 下载 | IEEE Xplore | 在页面内 fetch（带浏览器登录状态） |
 | 英文学术论文搜索/详情 | ScienceDirect | 结果页 DOM + 文章页 `citation_*` 元数据 |
-| ScienceDirect PDF 下载 | ScienceDirect | 打开文章页 "View PDF" 按钮上带访问令牌的链接，在 PDF 页内 fetch（安全验证可能需手动完成） |
+| ScienceDirect PDF 下载 | ScienceDirect | 点击文章页的 "View PDF" 按钮，在新打开的 PDF 标签页内 fetch（安全验证可能需手动完成） |
 | 中文学术论文搜索/详情 | CNKI 知网 | CDP 连接真实 Chrome/Edge |
 | CNKI PDF/CAJ 下载 | CNKI 知网 | 浏览器级 CDP 下载事件（Browser.setDownloadBehavior + downloadProgress），按标题重命名 |
 

@@ -563,62 +563,82 @@ _SD_PDF_BUTTON = 'a.accessbar-utility-link[href*="pdfft"]'   # the article's own
 
 
 async def _sd_open_pdf(page, url: str):
-    """Open an SD PDF: go to the article page, wait for its own "View PDF" button (not one of
-    the references' PDF links) and open the button's link in this tab. The link carries an
-    access token; untokenised pdfft links get HTTP 403. (A live comparison with clicking the
-    button in a new tab showed no fewer security checks for clicking, so this stays simple.)"""
+    """Open an SD PDF the way a reader does: on the article page, click its own "View PDF"
+    button (not one of the references' PDF links). The button's link carries an access token
+    (untokenised pdfft links get HTTP 403). Returns the tab showing the PDF: the button opens
+    a new tab (target=_blank); without that it is followed in this tab."""
     m = re.search(r"/pii/([A-Z0-9]+)", url)
     article = f"https://www.sciencedirect.com/science/article/pii/{m.group(1)}" if m else url
     if urlparse(page.url).path != urlparse(article).path:
         await page.goto(article, wait_until="domcontentloaded", timeout=30000)
     button = page.locator(_SD_PDF_BUTTON).first
     await button.wait_for(timeout=20000)   # the access bar renders late
-    await page.goto(await button.evaluate("a => a.href"), wait_until="domcontentloaded", timeout=30000)
+    if await button.get_attribute("target") != "_blank":
+        await button.click()
+        return page
+    async with page.context.expect_page(timeout=15000) as new_tab:
+        await button.click()
+    return await new_tab.value
 
 
-async def _sd_fetch_pdf(page, url: str) -> str | None:
+async def _sd_fetch_pdf(page, url: str):
     """Open the PDF, give a bot check a short grace period, then fetch the PDF bytes.
 
-    Returns base64 (or an 'ERROR:' / 'HTTP ' string), or None while a bot check is still
-    showing in the tab, where the user can complete it.
+    Returns (result, tab): result is base64 (or an 'ERROR:' / 'HTTP ' string) and the PDF tab
+    is closed; or result is None while a bot check is still showing in tab, which is left open
+    so the user can complete the check there.
     Cloudflare verification can destroy the execution context, hence the retries.
     """
-    await _sd_open_pdf(page, url)
-    for _ in range(80):   # up to 20 s for the redirect to the PDF host
-        if "sciencedirectassets" in page.url:
-            break
-        await asyncio.sleep(0.25)
-
-    # Give a bot check a short grace period; if it still blocks, hand over to the user
-    # (ACTION_REQUIRED) instead of holding the tool call for minutes.
-    deadline = time.monotonic() + CHALLENGE_GRACE_SECONDS
-    challenged = False
-    while True:
-        try:
-            page_text = await page.evaluate("() => document.body?.innerText?.slice(0, 500) || ''")
+    tab = await _sd_open_pdf(page, url)
+    keep_open = False
+    try:
+        for _ in range(80):   # up to 20 s for the redirect to the PDF host
+            if "sciencedirectassets" in tab.url:
+                break
+            await asyncio.sleep(0.25)
+        try:   # a freshly opened tab may not have rendered anything yet
+            await tab.wait_for_load_state("domcontentloaded", timeout=15000)
         except Exception:
-            page_text = "just a moment"   # context destroyed mid-challenge; keep waiting
-        if not is_challenge(page_text):
-            break
-        challenged = True
-        if time.monotonic() > deadline:
-            return None
-        await asyncio.sleep(1)
+            pass
 
-    if challenged:
-        await asyncio.sleep(2)   # let the page settle after the challenge passed
+        # Give a bot check a short grace period; if it still blocks, hand over to the user
+        # (ACTION_REQUIRED) instead of holding the tool call for minutes.
+        deadline = time.monotonic() + CHALLENGE_GRACE_SECONDS
+        challenged = False
+        while True:
+            try:
+                page_text = await tab.evaluate("() => document.body?.innerText?.slice(0, 500) || ''")
+            except Exception:
+                page_text = "just a moment"   # context destroyed mid-challenge; keep waiting
+            if not is_challenge(page_text):
+                break
+            challenged = True
+            if time.monotonic() > deadline:
+                keep_open = True
+                return None, tab
+            await asyncio.sleep(1)
 
-    for retry in range(3):
-        try:
-            b64 = await page.evaluate(_FETCH_AS_BASE64_JS, None)
-        except Exception as e:
-            log.debug(f"SD fetch retry {retry + 1}: {e}")
-            await asyncio.sleep(2)
-            continue
-        if b64 and not b64.startswith(("ERROR:", "HTTP ")) and _is_challenge_html(base64.b64decode(b64[:5464])):
-            return None   # the check page itself came back (its text may render late)
-        return b64
-    return "ERROR: fetching the PDF page failed"
+        if challenged:
+            await asyncio.sleep(2)   # let the page settle after the challenge passed
+
+        for retry in range(3):
+            try:
+                b64 = await tab.evaluate(_FETCH_AS_BASE64_JS, None)
+            except Exception as e:
+                log.debug(f"SD fetch retry {retry + 1}: {e}")
+                await asyncio.sleep(2)
+                continue
+            if b64 and not b64.startswith(("ERROR:", "HTTP ")) and _is_challenge_html(base64.b64decode(b64[:5464])):
+                keep_open = True   # the check page itself came back (its text may render late)
+                return None, tab
+            return b64, page
+        return "ERROR: fetching the PDF page failed", page
+    finally:
+        if tab is not page and not keep_open:
+            try:
+                await tab.close()
+            except Exception:
+                pass
 
 
 def _save_pdf(pdf_data: bytes, title: str) -> Path:
@@ -738,9 +758,9 @@ async def handle_download(db: str, args: dict) -> list[TextContent]:
 
     is_sd = "sciencedirect" in url or "sciencedirectassets" in page.url
     if is_sd and "/pdfft" in url:
-        pdf_b64 = await _sd_fetch_pdf(page, url)
+        pdf_b64, check_tab = await _sd_fetch_pdf(page, url)
         if pdf_b64 is None:
-            return await _show_check(db, page, "PDF 域名显示了安全验证页面（Cloudflare / Security verification），请在浏览器中完成验证后重试下载。")
+            return await _show_check(db, check_tab, "PDF 域名显示了安全验证页面（Cloudflare / Security verification），请在浏览器中完成验证后重试下载。")
     else:
         try:
             await page.unroute("**/*")

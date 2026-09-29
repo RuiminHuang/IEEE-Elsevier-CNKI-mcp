@@ -40,6 +40,7 @@ class FakeState:
     busy_network: bool = False   # inject BUSY_SCRIPT into every HTML page
     big_pdf: bool = False        # IEEE getPDF returns BIG_PDF_BYTES
     requests: list = field(default_factory=list)
+    pdf_referers: list = field(default_factory=list)   # Referer of each SD pdfft request
     connections: int = 0
 
 
@@ -51,6 +52,8 @@ async def install(context, state: FakeState):
     async def handler(route):
         url = route.request.url
         state.requests.append(url)
+        if "/pdfft" in url:
+            state.pdf_referers.append(route.request.headers.get("referer", ""))
         for key, secs in state.delays.items():
             if key in url:
                 await asyncio.sleep(secs)

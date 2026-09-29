@@ -5,7 +5,16 @@ ARTICLE = "https://www.sciencedirect.com/science/article/pii/S0000000001"
 PDFFT = ARTICLE + "/pdfft?md5=0&pid=1-s2.0-S0000000001-main.pdf"
 
 
-async def test_download_from_article_url_opens_no_extra_tabs(srv, sites):
+async def test_pdf_is_opened_by_clicking_view_pdf(srv, sites):
+    # a click comes from the article page (Referer) and opens a new tab, so the tool's own
+    # tab stays on the article; direct navigation would carry no Referer
+    text = (await srv.call_tool("sciencedirect_download", {"url": ARTICLE}))[0].text
+    assert "Downloaded PDF" in text, text
+    assert sites.pdf_referers and sites.pdf_referers[0] == ARTICLE, sites.pdf_referers
+    assert srv._pages["sciencedirect"].url.startswith(ARTICLE), srv._pages["sciencedirect"].url
+
+
+async def test_pdf_tab_is_closed_after_download(srv, sites):
     await srv._ensure_page("sciencedirect")
     before = len(srv._auth.context.pages)
     text = (await srv.call_tool("sciencedirect_download", {"url": ARTICLE}))[0].text
