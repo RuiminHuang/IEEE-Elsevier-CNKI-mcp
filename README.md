@@ -71,7 +71,7 @@ claude mcp add cnki-ieee-download -- python <克隆目录>/cnki-ieee-download/se
    - ScienceDirect：点击"Institutional Sign In" → CARSI → 学校认证
 4. 登录状态保存在 `~/.carsi_chrome_profile` 里，后续启动无需重新登录（不会另外生成 cookie 文件）
 5. 搜索和查看详情不需要登录；下载时如果未登录，Claude 会提示你在浏览器中登录
-6. 工具只在自己新开的标签页里操作，不会动你在这个浏览器里打开的页面
+6. 工具只在自己新开的标签页里操作，不会动你在这个浏览器里打开的页面；碰到安全验证或滑块验证码时，会把显示验证的那个标签页切到浏览器最前面，并提示你手动完成
 7. PDF 下载到调用项目的 `downloads/` 目录
 
 ## 功能覆盖

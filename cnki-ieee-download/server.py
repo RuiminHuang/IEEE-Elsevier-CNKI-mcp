@@ -154,6 +154,17 @@ def _need_login_response(db: str) -> list[TextContent]:
              f"[ACTION_REQUIRED: 请使用 AskUserQuestion 询问用户是否已完成 {label} 登录]")]
 
 
+async def _show_check(db: str, page, action: str) -> list[TextContent]:
+    """A bot check or captcha is showing in page: bring that tab to the front so the user
+    sees it right away, then ask them to complete it."""
+    try:
+        await page.bring_to_front()
+        action += "（已把该页面切到浏览器最前面）"
+    except Exception as e:
+        log.debug(f"bring_to_front failed: {e}")
+    return _need_action_response(db, action)
+
+
 def _need_action_response(db: str, action: str) -> list[TextContent]:
     """Create standardized action-required response (Cloudflare, captcha)."""
     db_config = get_db(db)
@@ -192,7 +203,7 @@ async def _ensure_logged_in(db: str) -> tuple[PwPage | None, list[TextContent] |
     if state == "ok":
         return page, None
     if state == "challenge":
-        return None, _need_action_response(db, "显示了安全验证页面（Cloudflare / Security verification）。")
+        return None, await _show_check(db, page, "显示了安全验证页面（Cloudflare / Security verification）。")
     return None, _need_login_response(db)
 
 
@@ -425,7 +436,7 @@ async def handle_search(db: str, args: dict) -> list[TextContent]:
     if not result.get("success"):
         err = result.get("error", "")
         if err == "captcha":
-            return _need_action_response(db, "显示了验证页面。")
+            return await _show_check(db, page, "显示了验证页面。")
         return [TextContent(type="text", text=f"Search failed: {err}")]
 
     papers = result.get("papers", [])
@@ -463,7 +474,7 @@ async def handle_detail(db: str, args: dict) -> list[TextContent]:
     if not result.get("success"):
         err = result.get("error", "")
         if err == "captcha":
-            return _need_action_response(db, "详情页显示了验证页面。")
+            return await _show_check(db, page, "详情页显示了验证页面。")
         return [TextContent(type="text", text=f"Detail failed: {err}")]
 
     title = result.get("title", "")
@@ -720,7 +731,7 @@ async def handle_download(db: str, args: dict) -> list[TextContent]:
 
     url, title, resolve_err = await _resolve_pdf_url(db, page, url, title)
     if resolve_err == "captcha":
-        return _need_action_response(db, "详情页显示了验证页面。")
+        return await _show_check(db, page, "详情页显示了验证页面。")
 
     if db == "ieee":
         url = _ieee_pdf_url(url)
@@ -729,7 +740,7 @@ async def handle_download(db: str, args: dict) -> list[TextContent]:
     if is_sd and "/pdfft" in url:
         pdf_b64 = await _sd_fetch_pdf(page, url)
         if pdf_b64 is None:
-            return _need_action_response(db, "PDF 域名显示了安全验证页面（Cloudflare / Security verification），请在浏览器中完成验证后重试下载。")
+            return await _show_check(db, page, "PDF 域名显示了安全验证页面（Cloudflare / Security verification），请在浏览器中完成验证后重试下载。")
     else:
         try:
             await page.unroute("**/*")
@@ -748,7 +759,12 @@ async def handle_download(db: str, args: dict) -> list[TextContent]:
 
     pdf_data = base64.b64decode(pdf_b64)
     if pdf_data[:4] != b'%PDF' and _is_challenge_html(pdf_data):
-        return _need_action_response(db, "PDF 地址返回了安全验证页面（Cloudflare / Security verification），请在浏览器中完成验证后重试下载。")
+        # the check came back from an in-page fetch: open it in the tab so it can be completed there
+        try:
+            await page.goto(url.replace('getPDF.jsp', 'stamp.jsp'), wait_until="domcontentloaded", timeout=45000)
+        except Exception as e:
+            log.debug(f"Opening the checked PDF URL failed: {e}")
+        return await _show_check(db, page, "PDF 地址返回了安全验证页面（Cloudflare / Security verification），请在浏览器中完成验证后重试下载。")
     if pdf_data[:4] != b'%PDF':
         snippet = pdf_data[:200].decode('utf-8', errors='replace')
         await page.goto(
@@ -828,7 +844,7 @@ async def handle_cnki_search(args: dict) -> list[TextContent]:
     if not result.get("success"):
         err_msg = result.get("error", "unknown")
         if err_msg == "captcha":
-            return _need_action_response("cnki", "正在显示滑块验证码。")
+            return await _show_check("cnki", page, "正在显示滑块验证码。")
         return [TextContent(type="text", text=f"CNKI search failed: {err_msg}")]
 
     papers = result.get("papers", [])
@@ -866,7 +882,7 @@ async def handle_cnki_detail(args: dict) -> list[TextContent]:
     if not result.get("success"):
         err_msg = result.get("error", "unknown")
         if err_msg == "captcha":
-            return _need_action_response("cnki", "验证码。")
+            return await _show_check("cnki", page, "详情页显示了滑块验证码。")
         return [TextContent(type="text", text=f"CNKI detail failed: {err_msg}")]
 
     text = ""
@@ -915,7 +931,7 @@ async def handle_cnki_download(args: dict) -> list[TextContent]:
         return el && el.getBoundingClientRect().top >= 0;
     }""")
     if captcha:
-        return _need_action_response("cnki", "正在显示滑块验证码。")
+        return await _show_check("cnki", page, "正在显示滑块验证码。")
 
     for selector in _CNKI_DOWNLOAD_LINKS:
         link = page.locator(selector).first

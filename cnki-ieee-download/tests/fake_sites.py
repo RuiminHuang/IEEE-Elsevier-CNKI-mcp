@@ -35,6 +35,8 @@ class FakeState:
     cnki_total_pages: int = 10
     cnki_captcha: bool = False
     sd_challenge: str = ""   # "", "cloudflare" or "elsevier" (page shown on the PDF domain)
+    sd_search_challenge: bool = False   # SD search page shows a Cloudflare check
+    ieee_pdf_challenge: bool = False    # IEEE getPDF answers with a Cloudflare check page
     busy_network: bool = False   # inject BUSY_SCRIPT into every HTML page
     big_pdf: bool = False        # IEEE getPDF returns BIG_PDF_BYTES
     requests: list = field(default_factory=list)
@@ -138,6 +140,8 @@ def _ieee(request, path, q, st):
                   % json.dumps(meta).replace("</", "<\\/"))
         return 200, "text/html", _html(f"{header}<h1 class='document-title'>IEEE Doc {doc}</h1>{script}")
     if path.startswith("/stampPDF/getPDF.jsp"):
+        if st.ieee_pdf_challenge:
+            return 200, "text/html", _html("<h1>Just a moment...</h1>")
         if not st.logged_in["ieee"]:
             return 200, "text/html", _html("<h1>Sign in to access this document</h1>")
         return 200, "application/pdf", BIG_PDF_BYTES if st.big_pdf else PDF_BYTES
@@ -198,6 +202,8 @@ def _sd(path, q, st):
     header = ("<div>Access through <b>Test University</b></div>"
               if st.logged_in["sciencedirect"] else "<a>Sign in</a><a>Register</a>")
     if path == "/search":
+        if st.sd_search_challenge:
+            return 200, "text/html", _html("<h1>Just a moment...</h1>")
         if q.get("qs") == "__snapshot__":
             return 200, "text/html", _html(header + SD_SNAPSHOT)
         offset = int(q.get("offset", "0"))
