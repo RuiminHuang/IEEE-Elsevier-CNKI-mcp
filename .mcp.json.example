@@ -1,9 +1,9 @@
 {
-  "_comment": "复制此文件为 .mcp.json，把 <克隆目录> 换成你 clone 仓库的绝对路径。Chrome/Edge 会自动启动无需手动配置。",
+  "_comment": "复制此文件为 .mcp.json，把 <克隆目录> 换成你执行 git clone 时所在目录的绝对路径（仓库的上一级目录）。Chrome/Edge 会自动启动无需手动配置。",
   "mcpServers": {
     "cnki-ieee-download": {
       "command": "python",
-      "args": ["<克隆目录>/cnki-ieee-download/server.py"]
+      "args": ["<克隆目录>/IEEE-Elsevier-CNKI-mcp/cnki-ieee-download/server.py"]
     }
   }
 }

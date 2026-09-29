@@ -26,10 +26,10 @@ cd IEEE-Elsevier-CNKI-mcp/cnki-ieee-download
 pip install -r requirements.txt
 ```
 
-注册 MCP（全局配置，把 `<克隆目录>` 换成你 clone 仓库的绝对路径）：
+注册 MCP（全局配置，把 `<克隆目录>` 换成你执行 `git clone` 时所在目录的绝对路径，即仓库的上一级目录）：
 
 ```bash
-claude mcp add cnki-ieee-download -- python <克隆目录>/cnki-ieee-download/server.py
+claude mcp add cnki-ieee-download -- python <克隆目录>/IEEE-Elsevier-CNKI-mcp/cnki-ieee-download/server.py
 ```
 
 或编辑 `.mcp.json`（参考 `.mcp.json.example`）：
@@ -39,7 +39,7 @@ claude mcp add cnki-ieee-download -- python <克隆目录>/cnki-ieee-download/se
   "mcpServers": {
     "cnki-ieee-download": {
       "command": "python",
-      "args": ["<克隆目录>/cnki-ieee-download/server.py"]
+      "args": ["<克隆目录>/IEEE-Elsevier-CNKI-mcp/cnki-ieee-download/server.py"]
     }
   }
 }
