@@ -1,4 +1,7 @@
-# Scholar Search — 学术论文搜索下载 MCP
+# 感谢
+> 本仓库由"https://github.com/zhdzh12138/scholar-search" Vibe Coding而来。
+
+# IEEE-Elsevier-CNKI-mcp — 学术论文搜索下载 MCP
 
 通过 **CDP 连接用户真实 Chrome/Edge**，一站式搜索和下载 IEEE / ScienceDirect / CNKI 论文。
 
@@ -18,8 +21,8 @@ CDP 连接 (carsi_search/engine.py)      ← 只在工具自己新开的标签�
 ## 安装
 
 ```bash
-git clone https://github.com/zhdzh12138/scholar-search.git
-cd scholar-search
+git clone git@github.com:RuiminHuang/IEEE-Elsevier-CNKI-mcp.git
+cd IEEE-Elsevier-CNKI-mcp
 pip install -r cnki-ieee-download/requirements.txt
 ```
 
@@ -147,6 +150,7 @@ python tests/capture_fixtures.py        # 网站改版后重新抓取真实页�
 
 ## 致谢
 
+- [scholar-search](https://github.com/zhdzh12138/scholar-search) - 基础参考
 - [cnki-skills](https://github.com/cookjohn/cnki-skills) — CNKI 知网 Skills
 - [cnki-codex-skills](https://github.com/cfh-7598/cnki-codex-skills) — CDP 连接模式参考
 
