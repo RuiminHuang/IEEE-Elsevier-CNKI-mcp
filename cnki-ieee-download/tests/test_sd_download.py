@@ -5,7 +5,7 @@ ARTICLE = "https://www.sciencedirect.com/science/article/pii/S0000000001"
 PDFFT = ARTICLE + "/pdfft?md5=0&pid=1-s2.0-S0000000001-main.pdf"
 
 
-async def test_download_from_article_url_closes_pdf_tab(srv, sites):
+async def test_download_from_article_url_opens_no_extra_tabs(srv, sites):
     await srv._ensure_page("sciencedirect")
     before = len(srv._auth.context.pages)
     text = (await srv.call_tool("sciencedirect_download", {"url": ARTICLE}))[0].text
@@ -47,15 +47,14 @@ async def test_error_page_on_site_is_not_mistaken_for_logged_out(srv, sites):
     assert "Downloaded PDF" in text, text
 
 
-async def test_goto_method_opens_the_buttons_real_link(srv, sites, monkeypatch):
-    # the experiment's "goto" variant must use the same (tokenised) link the button has
-    monkeypatch.setattr(srv, "SD_PDF_VIA_CLICK", False)
+async def test_opens_the_buttons_tokenised_link(srv, sites):
+    # the button renders late; its tokenised link works, the untokenised fallback gets 403
     text = (await srv.call_tool("sciencedirect_download", {"url": ARTICLE}))[0].text
     assert "Downloaded PDF" in text, text
     assert any("pdfft?md5=0" in u for u in sites.requests), sites.requests
 
 
-async def test_clicks_the_articles_own_pdf_button(srv, sites):
+async def test_uses_the_articles_own_pdf_button(srv, sites):
     # the fake article also links a reference's PDF (SREF000001); it must not be used
     await srv.call_tool("sciencedirect_download", {"url": ARTICLE})
     assert not any("SREF000001" in u for u in sites.requests), sites.requests

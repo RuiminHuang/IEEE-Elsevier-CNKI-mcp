@@ -548,91 +548,66 @@ _FETCH_AS_BASE64_JS = """
 """
 
 
-SD_PDF_VIA_CLICK = True   # experiment: live run compares click vs goto, then the loser is removed
 _SD_PDF_BUTTON = 'a.accessbar-utility-link[href*="pdfft"]'   # the article's own "View PDF" button
 
 
 async def _sd_open_pdf(page, url: str):
-    """Open an SD PDF the way a reader does: article page, tab in front, click "View PDF"
-    (not one of the references' PDF links). Returns the page showing the PDF, usually a new tab.
-    The button's link carries an access token; untokenised pdfft links get HTTP 403."""
+    """Open an SD PDF: go to the article page, wait for its own "View PDF" button (not one of
+    the references' PDF links) and open the button's link in this tab. The link carries an
+    access token; untokenised pdfft links get HTTP 403. (A live comparison with clicking the
+    button in a new tab showed no fewer security checks for clicking, so this stays simple.)"""
     m = re.search(r"/pii/([A-Z0-9]+)", url)
     article = f"https://www.sciencedirect.com/science/article/pii/{m.group(1)}" if m else url
     if urlparse(page.url).path != urlparse(article).path:
         await page.goto(article, wait_until="domcontentloaded", timeout=30000)
     button = page.locator(_SD_PDF_BUTTON).first
     await button.wait_for(timeout=20000)   # the access bar renders late
-    if not SD_PDF_VIA_CLICK:
-        await page.goto(await button.evaluate("a => a.href"), wait_until="domcontentloaded", timeout=30000)
-        return page
-    await page.bring_to_front()
-    if await button.get_attribute("target") == "_blank":
-        async with page.context.expect_page(timeout=15000) as new:
-            await button.click()
-        pdf_page = await new.value
-        await pdf_page.bring_to_front()
-        return pdf_page
-    await button.click()
-    return page
+    await page.goto(await button.evaluate("a => a.href"), wait_until="domcontentloaded", timeout=30000)
 
 
 async def _sd_fetch_pdf(page, url: str) -> str | None:
     """Open the PDF, give a bot check a short grace period, then fetch the PDF bytes.
 
     Returns base64 (or an 'ERROR:' / 'HTTP ' string), or None while a bot check is still
-    showing; that tab is then left open so the user can complete the check in it.
+    showing in the tab, where the user can complete it.
     Cloudflare verification can destroy the execution context, hence the retries.
     """
-    pdf_page = await _sd_open_pdf(page, url)
-    keep_open = False
-    try:
-        for _ in range(80):   # up to 20 s for the redirect to the PDF host
-            if "sciencedirectassets" in pdf_page.url:
-                break
-            await asyncio.sleep(0.25)
-        try:   # a freshly opened tab may not have rendered anything yet
-            await pdf_page.wait_for_load_state("domcontentloaded", timeout=15000)
+    await _sd_open_pdf(page, url)
+    for _ in range(80):   # up to 20 s for the redirect to the PDF host
+        if "sciencedirectassets" in page.url:
+            break
+        await asyncio.sleep(0.25)
+
+    # Give a bot check a short grace period; if it still blocks, hand over to the user
+    # (ACTION_REQUIRED) instead of holding the tool call for minutes.
+    deadline = time.monotonic() + CHALLENGE_GRACE_SECONDS
+    challenged = False
+    while True:
+        try:
+            page_text = await page.evaluate("() => document.body?.innerText?.slice(0, 500) || ''")
         except Exception:
-            pass
+            page_text = "just a moment"   # context destroyed mid-challenge; keep waiting
+        if not is_challenge(page_text):
+            break
+        challenged = True
+        if time.monotonic() > deadline:
+            return None
+        await asyncio.sleep(1)
 
-        # Give a bot check a short grace period; if it still blocks, hand over to the user
-        # (ACTION_REQUIRED) instead of holding the tool call for minutes.
-        deadline = time.monotonic() + CHALLENGE_GRACE_SECONDS
-        challenged = False
-        while True:
-            try:
-                page_text = await pdf_page.evaluate("() => document.body?.innerText?.slice(0, 500) || ''")
-            except Exception:
-                page_text = "just a moment"   # context destroyed mid-challenge; keep waiting
-            if not is_challenge(page_text):
-                break
-            challenged = True
-            if time.monotonic() > deadline:
-                keep_open = True
-                return None
-            await asyncio.sleep(1)
+    if challenged:
+        await asyncio.sleep(2)   # let the page settle after the challenge passed
 
-        if challenged:
-            await asyncio.sleep(2)   # let the page settle after the challenge passed
-
-        for retry in range(3):
-            try:
-                b64 = await pdf_page.evaluate(_FETCH_AS_BASE64_JS, None)
-            except Exception as e:
-                log.debug(f"SD fetch retry {retry + 1}: {e}")
-                await asyncio.sleep(2)
-                continue
-            if b64 and not b64.startswith(("ERROR:", "HTTP ")) and _is_challenge_html(base64.b64decode(b64[:5464])):
-                keep_open = True   # the check page itself came back; the user completes it in that tab
-                return None
-            return b64
-        return "ERROR: fetching the PDF page failed"
-    finally:
-        if pdf_page is not page and not keep_open:
-            try:
-                await pdf_page.close()
-            except Exception:
-                pass
+    for retry in range(3):
+        try:
+            b64 = await page.evaluate(_FETCH_AS_BASE64_JS, None)
+        except Exception as e:
+            log.debug(f"SD fetch retry {retry + 1}: {e}")
+            await asyncio.sleep(2)
+            continue
+        if b64 and not b64.startswith(("ERROR:", "HTTP ")) and _is_challenge_html(base64.b64decode(b64[:5464])):
+            return None   # the check page itself came back (its text may render late)
+        return b64
+    return "ERROR: fetching the PDF page failed"
 
 
 def _save_pdf(pdf_data: bytes, title: str) -> Path:
