@@ -22,8 +22,8 @@ CDP 连接 (carsi_search/engine.py)      ← 只在工具自己新开的标签�
 
 ```bash
 git clone git@github.com:RuiminHuang/IEEE-Elsevier-CNKI-mcp.git
-cd IEEE-Elsevier-CNKI-mcp
-pip install -r cnki-ieee-download/requirements.txt
+cd IEEE-Elsevier-CNKI-mcp/cnki-ieee-download
+pip install -r requirements.txt
 ```
 
 注册 MCP（全局配置，把 `<克隆目录>` 换成你 clone 仓库的绝对路径）：
