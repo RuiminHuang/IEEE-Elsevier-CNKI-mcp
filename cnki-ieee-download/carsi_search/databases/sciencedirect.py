@@ -28,11 +28,15 @@ class ScienceDirectAdapter(BaseAdapter):
                                            kwargs.get("journal"))
         await self._navigate(search_url)
 
-        # Return as soon as either the results or a bot check shows up.
+        # Return as soon as the results, a status message shown in their place (no results, or
+        # the search refused) or a bot check shows up. Status markup: tests/fake_sites.py.
         try:
             handle = await self.page.wait_for_function(
                 r"""(markers) => {
                     if (document.querySelector('a.result-list-title-link')) return 'results';
+                    if (document.querySelector('.error-zero-results')) return 'empty';
+                    const status = document.querySelector('.SearchStatusMessage.statusError')?.innerText || '';
+                    if (status.trim()) return 'refused:' + status.replace(/\s+/g, ' ').trim();
                     const t = (document.body?.innerText || '').toLowerCase();
                     return markers.some(m => t.includes(m)) ? 'challenge' : null;
                 }""", arg=list(CHALLENGE_MARKERS), timeout=20000)
@@ -41,6 +45,10 @@ class ScienceDirectAdapter(BaseAdapter):
             return {"success": False, "error": "timeout — 搜索结果未加载，可能页面结构变化"}
         if state == "challenge":
             return {"success": False, "error": "captcha"}
+        if state == "empty":
+            return {"success": True, "total": "0", "papers": []}
+        if state.startswith("refused:"):   # e.g. a journal title SD doesn't recognize
+            return {"success": False, "error": f"ScienceDirect: {state.removeprefix('refused:')}"}
 
         # One entry per li.ResultItem, in page order (structure: tests/fixtures/sd_search_items.html).
         # Fields are read from their own elements: textContent of a whole item glues words

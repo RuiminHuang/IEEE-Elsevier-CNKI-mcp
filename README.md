@@ -64,7 +64,7 @@ claude mcp add cnki-ieee-download -- python <克隆目录>/IEEE-Elsevier-CNKI-mc
 | `status` | 显示 CDP 连接状态和各数据库已打开的页面 |
 | `logout` | 断开 CDP 并关闭工具打开的标签页（浏览器和登录状态保持不变） |
 
-`journal` 按“刊名包含”匹配：IEEE 用 `"Publication Title"` 字段检索，ScienceDirect 用高级检索的 `pub=`。刊名请写全称，否则会混入名字相近的刊（例如 ScienceDirect 的 `Signal Processing` 也会匹配 `Digital Signal Processing`）。
+`journal` 按“刊名包含”匹配：IEEE 用 `"Publication Title"` 字段检索，ScienceDirect 用高级检索的 `pub=`。刊名请写全称，否则会混入名字相近的刊（例如 ScienceDirect 的 `Signal Processing` 也会匹配 `Digital Signal Processing`）。ScienceDirect 不认识的刊名会直接返回它自己的报错（`Entry not recognized`）。
 
 ## 首次使用
 

@@ -36,6 +36,8 @@ class FakeState:
     cnki_captcha: bool = False
     sd_challenge: str = ""   # "", "cloudflare" or "elsevier" (page shown on the PDF domain)
     sd_search_challenge: bool = False   # SD search page shows a Cloudflare check
+    sd_no_results: bool = False         # SD search finds nothing
+    sd_unknown_journal: bool = False    # SD refuses the search: pub= title not recognized
     ieee_pdf_challenge: bool = False    # IEEE getPDF answers with a Cloudflare check page
     busy_network: bool = False   # inject BUSY_SCRIPT into every HTML page
     big_pdf: bool = False        # IEEE getPDF returns BIG_PDF_BYTES
@@ -159,6 +161,18 @@ def _ieee(request, path, q, st):
 # Markup mirrors the live snapshots in fixtures/sd_search_items.html and sd_article.html.
 
 SD_SNAPSHOT = (FIXTURES / "sd_search_items.html").read_text(encoding="utf-8")
+# Status messages shown in place of the results, as seen live. The empty SearchStatusMessage
+# is on every results page too.
+_SD_STATUS = "<div aria-live='assertive' class='SearchStatusMessage{0}'>{1}</div>"
+SD_NO_RESULTS = _SD_STATUS.format(
+    " col-xs-24 col-sm-16 col-lg-18 statusError",
+    "<div class='error-zero-results'><p>No results found.</p>"
+    "<p>Please check for typos, or use fewer terms or fields.</p></div>")
+SD_UNKNOWN_JOURNAL = _SD_STATUS.format(
+    " col-xs-24 col-sm-16 col-lg-18 statusError",
+    "<div class='error-400'><p>Sorry – your search could not be run.</p>"
+    "<p class='message-field-title'><span><b>Journal or book title</b>: </span>"
+    "<span><span>Entry not recognized. Type full title or choose from the list<br></span></span></p></div>")
 
 
 def _sd_item(pii: str, title: str, authors: list, journal: str, date: str, has_pdf: bool) -> str:
@@ -211,6 +225,10 @@ def _sd(path, q, st):
     if path == "/search":
         if st.sd_search_challenge:
             return 200, "text/html", _html("<h1>Just a moment...</h1>")
+        if st.sd_no_results:
+            return 200, "text/html", _html(header + SD_NO_RESULTS)
+        if st.sd_unknown_journal:
+            return 200, "text/html", _html(header + SD_UNKNOWN_JOURNAL)
         if q.get("qs") == "__snapshot__":
             return 200, "text/html", _html(header + SD_SNAPSHOT)
         offset = int(q.get("offset", "0"))
@@ -226,7 +244,8 @@ def _sd(path, q, st):
             has_pdf = i % 2 == 1 or i > 6          # papers 2, 4, 6 have no PDF link
             items.append(_sd_item(pii, f"SD O{offset} Paper {i}", [f"Alice {i}", f"Bob {i}"],
                                   q.get("pub") or "Journal X", date, has_pdf))   # "pub=": SD's journal filter
-        body = (f"{header}<h1 class='text-l'><span class='search-body-results-text'>1,234 results</span></h1>"
+        body = (f"{header}{_SD_STATUS.format('', '')}"
+                f"<h1 class='text-l'><span class='search-body-results-text'>1,234 results</span></h1>"
                 f"<ol class='search-result-wrapper'>{''.join(items)}</ol>")
         return 200, "text/html", _html(body)
     m = re.match(r"/science/article/pii/([A-Z0-9]+)(/pdfft)?", path)
