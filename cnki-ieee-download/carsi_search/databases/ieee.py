@@ -9,7 +9,7 @@ Both are structured data, so no DOM selectors are needed.
 import re
 from urllib.parse import quote
 
-from .base import BaseAdapter, year_range
+from .base import BaseAdapter, normalize_journal, year_range
 
 _MARKUP = re.compile(r"\[::|::\]|<[^>]+>")   # search highlights "[::radar::]" and inline HTML
 _SKIP_KEYWORD_TYPES = {"Index Terms"}         # long machine-generated list
@@ -65,7 +65,10 @@ class IeeeAdapter(BaseAdapter):
     PAGE_SIZE = 25
 
     @staticmethod
-    def build_search_url(query: str, page: int = 1, year_start=None, year_end=None) -> str:
+    def build_search_url(query: str, page: int = 1, year_start=None, year_end=None, journal=None) -> str:
+        journal = normalize_journal(journal)
+        if journal:   # command-search field: publications whose title contains the phrase
+            query = f'({query}) AND ("Publication Title":"{journal}")'
         url = ("https://ieeexplore.ieee.org/search/searchresult.jsp?"
                f"newsearch=true&queryText={quote(query)}&pageNumber={int(page)}")
         years = year_range(year_start, year_end)
@@ -73,7 +76,8 @@ class IeeeAdapter(BaseAdapter):
 
     async def search(self, query: str, **kwargs) -> dict:
         page_num = int(kwargs.get("page") or 1)
-        url = self.build_search_url(query, page_num, kwargs.get("year_start"), kwargs.get("year_end"))
+        url = self.build_search_url(query, page_num, kwargs.get("year_start"), kwargs.get("year_end"),
+                                    kwargs.get("journal"))
         try:
             async with self.page.expect_response(
                     lambda r: "/rest/search" in r.url and r.request.method == "POST",

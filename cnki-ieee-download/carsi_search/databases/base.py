@@ -32,6 +32,12 @@ def year_range(year_start, year_end) -> tuple[str, str] | None:
     return start or "1800", end or str(datetime.now().year)
 
 
+def normalize_journal(value) -> str:
+    """' "Journal of  Power Sources" ' -> 'Journal of Power Sources'; empty when no journal given.
+    Double quotes are dropped: both sites read them as phrase delimiters."""
+    return " ".join(re.sub(r'["“”]', "", str(value or "")).split())
+
+
 class BaseAdapter:
     name: str = "base"
     home_url: str = ""
