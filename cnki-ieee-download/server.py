@@ -32,7 +32,7 @@ from mcp.types import Tool, TextContent
 
 from carsi_search.engine import CarsiAuth, log
 from carsi_search.registry import list_dbs, get_db, get_adapter
-from carsi_search.databases.base import is_challenge, year_range
+from carsi_search.databases.base import is_challenge, normalize_journal, year_range
 from carsi_search.databases.cnki import CnkiAdapter
 
 from playwright.async_api import Page as PwPage
@@ -223,7 +223,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="ieee_search",
             description="Search IEEE Xplore. No login needed. Supports paging via 'page'. "
-                        "Optional year_start/year_end filter by publication year.",
+                        "Optional year_start/year_end filter by publication year, "
+                        "optional journal by publication title.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -231,6 +232,10 @@ async def list_tools() -> list[Tool]:
                     "page": {"type": "integer", "description": "Page number", "default": 1},
                     "year_start": {"type": "string", "description": "(Optional) Start year e.g. '2020'"},
                     "year_end": {"type": "string", "description": "(Optional) End year e.g. '2025'"},
+                    "journal": {"type": "string", "description":
+                        "(Optional) Journal or conference title e.g. 'IEEE Transactions on Signal Processing'. "
+                        "Matches every publication whose title contains it, so give the full title "
+                        "to leave out similarly named ones"},
                 },
                 "required": ["query"]
             }
@@ -267,7 +272,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="sciencedirect_search",
             description="Search ScienceDirect. No login needed. Supports paging via 'page'. "
-                        "Optional year_start/year_end filter by publication year.",
+                        "Optional year_start/year_end filter by publication year, "
+                        "optional journal by publication title.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -275,6 +281,10 @@ async def list_tools() -> list[Tool]:
                     "page": {"type": "integer", "description": "Page number", "default": 1},
                     "year_start": {"type": "string", "description": "(Optional) Start year e.g. '2020'"},
                     "year_end": {"type": "string", "description": "(Optional) End year e.g. '2025'"},
+                    "journal": {"type": "string", "description":
+                        "(Optional) Journal or book title e.g. 'Journal of Power Sources'. "
+                        "Matches every publication whose title contains it, so give the full title "
+                        "to leave out similarly named ones"},
                 },
                 "required": ["query"]
             }
@@ -431,7 +441,8 @@ async def handle_search(db: str, args: dict) -> list[TextContent]:
 
     adapter = await get_adapter(db, page)
     result = await adapter.search(args["query"], page=args.get("page", 1),
-                                  year_start=args.get("year_start"), year_end=args.get("year_end"))
+                                  year_start=args.get("year_start"), year_end=args.get("year_end"),
+                                  journal=args.get("journal"))
 
     if not result.get("success"):
         err = result.get("error", "")
@@ -446,9 +457,15 @@ async def handle_search(db: str, args: dict) -> list[TextContent]:
     total = result.get("total", "")
     total_str = f" (total: {total})" if total else ""
     page_num = args.get("page", 1)
+    filters = []
+    journal = normalize_journal(args.get("journal"))
+    if journal:
+        filters.append(f"期刊={journal}")
     years = year_range(args.get("year_start"), args.get("year_end"))
-    year_str = f" [年份={years[0]}-{years[1]}]" if years else ""
-    text = f"Page {page_num}, {len(papers)} papers{total_str}{year_str}:\n\n"
+    if years:
+        filters.append(f"年份={years[0]}-{years[1]}")
+    filter_str = f" [{', '.join(filters)}]" if filters else ""
+    text = f"Page {page_num}, {len(papers)} papers{total_str}{filter_str}:\n\n"
     for i, p in enumerate(papers, 1):
         text += f"{i}. **{p.get('title', 'No title')}**\n"
         if p.get('authors'): text += f"   Authors: {p['authors']}\n"

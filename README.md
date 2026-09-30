@@ -50,11 +50,11 @@ claude mcp add cnki-ieee-download -- python <克隆目录>/IEEE-Elsevier-CNKI-mc
 | 工具 | 说明 |
 |------|------|
 | `ieee_login` | 连接浏览器，检测 IEEE 登录状态 |
-| `ieee_search` | 搜索 IEEE 论文（无需登录）；支持 `page` 翻页、`year_start`/`year_end` 年份筛选 |
+| `ieee_search` | 搜索 IEEE 论文（无需登录）；支持 `page` 翻页、`year_start`/`year_end` 年份筛选、`journal` 期刊/会议筛选 |
 | `ieee_detail` | 获取 IEEE 论文详情（无需登录）：作者、期刊/会议、年份、DOI、页码、关键词，以及带标题的下载命令 |
 | `ieee_download` | 下载 IEEE PDF（需登录；同名文件不覆盖） |
 | `sciencedirect_login` | 连接浏览器，检测 ScienceDirect 登录状态 |
-| `sciencedirect_search` | 搜索 ScienceDirect 论文（无需登录）；支持 `page`、`year_start`/`year_end`，标出每篇是否可下载 |
+| `sciencedirect_search` | 搜索 ScienceDirect 论文（无需登录）；支持 `page`、`year_start`/`year_end`、`journal` 期刊筛选，标出每篇是否可下载 |
 | `sciencedirect_detail` | 获取 ScienceDirect 论文详情（无需登录），附带标题和带标题的下载命令 |
 | `sciencedirect_download` | 下载 ScienceDirect PDF（需登录）：在文章页点击 "View PDF"，从新打开的标签页取得 PDF，完成后关闭该标签页；遇到安全验证会保留验证页并请你手动完成 |
 | `cnki_search` | 搜索 CNKI（无需登录），支持 `page`、`sort`；可选 `author`/`journal`/`year_start`/`year_end` 触发专业检索 |
@@ -63,6 +63,8 @@ claude mcp add cnki-ieee-download -- python <克隆目录>/IEEE-Elsevier-CNKI-mc
 | `cnki_download` | 下载 CNKI 论文（需登录）：优先 PDF，没有 PDF 则下载 CAJ；按标题命名，同名文件不覆盖 |
 | `status` | 显示 CDP 连接状态和各数据库已打开的页面 |
 | `logout` | 断开 CDP 并关闭工具打开的标签页（浏览器和登录状态保持不变） |
+
+`journal` 按“刊名包含”匹配：IEEE 用 `"Publication Title"` 字段检索，ScienceDirect 用高级检索的 `pub=`。刊名请写全称，否则会混入名字相近的刊（例如 ScienceDirect 的 `Signal Processing` 也会匹配 `Digital Signal Processing`）。
 
 ## 首次使用
 

@@ -94,7 +94,8 @@ def _respond(request, st: FakeState):
 
 # ── IEEE ──
 # Mirrors the live site: the results page fetches its data with POST /rest/search
-# (JSON body, "ranges": ["2020_2022_Year"]); document pages embed xplGlobal.document.metadata.
+# (JSON body, "ranges": ["2020_2022_Year"]; a journal filter is a "Publication Title"
+# clause inside queryText); document pages embed xplGlobal.document.metadata.
 # Record and metadata shapes come from the real snapshots in fixtures/.
 
 IEEE_SEARCH = json.loads((FIXTURES / "ieee_search.json").read_text(encoding="utf-8"))
@@ -117,11 +118,14 @@ def _ieee_search_api(post_data):
         m = re.match(r"(\d{4})_(\d{4})_Year", r)
         if m:
             lo, hi = int(m.group(1)), int(m.group(2))
+    journal = re.search(r'"Publication Title":"([^"]*)"', body.get("queryText") or "")
     records = []
     for i in range(1, 4):
         rec = dict(IEEE_SEARCH["records"][0])
         rec.update(articleTitle=f"IEEE P{page} Paper {i}", articleNumber=f"{page}00{i}",
                    documentLink=f"/document/{page}00{i}/", publicationYear=str(lo + (i - 1) % (hi - lo + 1)))
+        if journal:
+            rec["publicationTitle"] = journal.group(1)
         records.append(rec)
     return {**IEEE_SEARCH, "records": records, "totalRecords": 1234,
             "startRecord": (page - 1) * 25, "recordsPerPage": 25}
@@ -221,7 +225,7 @@ def _sd(path, q, st):
                 date = "5 May 1998" if i == 2 else "1 March 2021"
             has_pdf = i % 2 == 1 or i > 6          # papers 2, 4, 6 have no PDF link
             items.append(_sd_item(pii, f"SD O{offset} Paper {i}", [f"Alice {i}", f"Bob {i}"],
-                                  "Journal X", date, has_pdf))
+                                  q.get("pub") or "Journal X", date, has_pdf))   # "pub=": SD's journal filter
         body = (f"{header}<h1 class='text-l'><span class='search-body-results-text'>1,234 results</span></h1>"
                 f"<ol class='search-result-wrapper'>{''.join(items)}</ol>")
         return 200, "text/html", _html(body)
