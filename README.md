@@ -142,7 +142,7 @@ python tests/capture_fixtures.py        # 网站改版后重新抓取真实页�
 
 - 离线测试会以无头模式启动 Playwright 自带的 Chromium（找不到时改用本机 Chrome/Edge），也可以用环境变量 `TEST_BROWSER_PATH` 指定浏览器。测试会隔离浏览器配置和下载目录，不会动你真实的登录状态。
 - IEEE 和 ScienceDirect 的模拟站点按 `tests/fixtures/` 里的真实页面片段构造。网站改版导致提取出错时，先运行 `capture_fixtures.py` 重新抓取，再对照新夹具修改适配器和模拟站点。夹具只保存公开的书目信息。
-- `live_smoke.py` 会检查返回内容是否正确（年份、作者分隔、DOI、年份筛选、耗时等），可以只测某个库（`python tests/live_smoke.py cnki`）。可选参数：`--caj` 让知网下载优先走 CAJ，验证 CAJ 下载；`--sd-downloads=N` 连续下载 N 篇 ScienceDirect 论文并统计安全验证出现的次数。
+- `live_smoke.py` 会检查返回内容是否正确（年份、作者分隔、DOI、年份和期刊筛选、零结果、耗时等），可以只测某个库（`python tests/live_smoke.py cnki`）。可选参数：`--caj` 让知网下载优先走 CAJ，验证 CAJ 下载；`--sd-downloads=N` 连续下载 N 篇 ScienceDirect 论文并统计安全验证出现的次数。
 
 ## 免责声明
 

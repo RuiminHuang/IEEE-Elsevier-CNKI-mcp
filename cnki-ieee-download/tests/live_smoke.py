@@ -7,8 +7,8 @@ for the download checks. Run from cnki-ieee-download/:
     python tests/live_smoke.py cnki --caj          # one database; --caj also downloads a CAJ
     python tests/live_smoke.py sciencedirect --sd-downloads=3 [--sd-page=2]
 
-Checks content, not just presence: years, author separators, DOI, year filters,
-call timings, and that a tab the user has open is left alone. Prints every tool
+Checks content, not just presence: years, author separators, DOI, year and journal
+filters, searches without results, call timings, and that a tab the user has open is left alone. Prints every tool
 response and a PASS/FAIL summary. Downloads go to ./downloads/.
 """
 
@@ -66,6 +66,12 @@ def years_within(text: str, lo: int, hi: int) -> bool:
     return bool(years) and all(lo <= y <= hi for y in years)
 
 
+def from_journal(text: str, journal: str) -> bool:
+    """Every result comes from a publication whose title contains journal."""
+    sources = re.findall(r"   Source: (.*)", text)
+    return bool(sources) and all(journal.lower() in s.lower() for s in sources)
+
+
 async def check_ieee(opts):
     login = await call("ieee_login")
     q = "radar signal processing"
@@ -78,6 +84,9 @@ async def check_ieee(opts):
            "IEEE results missing year or source")
     filtered = await call("ieee_search", query=q, year_start="2020", year_end="2022")
     expect(years_within(filtered, 2020, 2022), "IEEE year filter not applied")
+    journal = "IEEE Transactions on Signal Processing"
+    expect(from_journal(await call("ieee_search", query=q, journal=journal), journal),
+           "IEEE journal filter not applied")
     detail = await call("ieee_detail", url=urls(p1)[0])
     fast(detail, "IEEE detail")
     expect("**DOI**: 10." in detail and "DOI: DOI" not in detail and "All Authors" not in detail,
@@ -102,6 +111,15 @@ async def check_sciencedirect(opts):
     expect(with_sep >= 0.5 * len(blocks), f"SD authors not separated: {with_sep}/{len(blocks)}")
     filtered = await call("sciencedirect_search", query=q, year_start="2020", year_end="2022")
     expect(years_within(filtered, 2020, 2022), "SD year filter not applied")
+    journal = "Journal of Power Sources"
+    expect(from_journal(await call("sciencedirect_search", query=q, journal=journal), journal),
+           "SD journal filter not applied")
+    unknown = await call("sciencedirect_search", query=q, journal="Zzqx Nonexistent Journal")
+    expect(unknown.startswith("Search failed: ScienceDirect: ") and seconds(unknown) <= MAX_SECONDS,
+           "SD did not report an unknown journal quickly")
+    nothing = await call("sciencedirect_search", query="zzqxvbnm qwxzkjh plmokn")
+    expect(nothing.startswith("No papers found.") and seconds(nothing) <= MAX_SECONDS,
+           "SD search without results did not return 'No papers found.' quickly")
     detail = await call("sciencedirect_detail", url=urls(p1)[0])
     fast(detail, "SD detail")
     expect("**Publication**: " in detail and "**Year**: " in detail and "**DOI**: 10." in detail,
