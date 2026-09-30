@@ -8,14 +8,14 @@ CNKI 的反爬系统会检测 Playwright 浏览器（无论 headless 还是有�
 === 解决方案：CDP 连接用户的真实 Chrome ===
 通过 CDP (Chrome DevTools Protocol) 连接用户已打开的 Chrome 浏览器：
 - 用户在自己的 Chrome 中登录 CNKI（机构登录 → 校外访问）
-- 代码通过 `playwright.chromium.connect_over_cdp("http://127.0.0.1:9222")` 连接
+- 代码通过 `playwright.chromium.connect_over_cdp("http://localhost:9222")` 连接
 - CNKI 无法检测到自动化（因为是真实浏览器）
 - 搜索、详情、下载全部正常工作
 
 === 前提条件 ===
 1. Chrome 必须以调试模式启动: chrome --remote-debugging-port=9222
 2. 用户必须在 Chrome 中登录 CNKI
-3. 端口 9222 必须可访问（curl http://127.0.0.1:9222/json/version 验证）
+3. 端口 9222 必须可访问（curl http://localhost:9222/json/version 验证）
 
 === 经过验证的 CNKI DOM 选择器 ===
 搜索结果:

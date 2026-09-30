@@ -15,8 +15,11 @@ import sys
 from pathlib import Path
 from playwright.async_api import async_playwright, Browser
 
-CDP_URL = os.environ.get("CHROME_CDP_URL", "http://127.0.0.1:9222")
+# "localhost", not 127.0.0.1: Edge 154 listens on the IPv6 loopback [::1] only.
+DEFAULT_CDP_URL = "http://localhost:9222"
+CDP_URL = os.environ.get("CHROME_CDP_URL", DEFAULT_CDP_URL)
 _CDP_PROFILE = Path.home() / ".carsi_chrome_profile"
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
 
 LOG_FILE = Path(__file__).parent.parent / "carsi.log"
 logging.basicConfig(
@@ -83,6 +86,14 @@ def _is_cdp_available() -> bool:
         return False
 
 
+def _bypass_proxy_for_loopback():
+    """Playwright's driver sends the CDP handshake through HTTP(S)_PROXY, and a proxy app
+    can't reach the browser's loopback port (it answers 502). Put loopback in NO_PROXY."""
+    for key in ("NO_PROXY", "no_proxy"):   # one variable on Windows, two elsewhere
+        hosts = [h.strip() for h in os.environ.get(key, "").split(",") if h.strip()]
+        os.environ[key] = ",".join(hosts + [h for h in _LOOPBACK_HOSTS if h not in hosts])
+
+
 class CarsiAuth:
     """CDP connection wrapper with browser auto-launch."""
 
@@ -96,6 +107,7 @@ class CarsiAuth:
         if not _is_cdp_available():
             await self._launch_browser()
 
+        _bypass_proxy_for_loopback()   # before the Playwright driver starts: it inherits the env
         self._playwright = await async_playwright().start()
         for attempt in range(3):
             try:
