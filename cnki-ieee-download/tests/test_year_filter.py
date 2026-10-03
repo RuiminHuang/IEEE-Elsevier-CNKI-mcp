@@ -30,4 +30,4 @@ async def test_results_are_within_years(srv, sites, tool):
 async def test_search_schemas_accept_years():
     tools = {t.name: t for t in await server.list_tools()}
     for name in ("ieee_search", "sciencedirect_search"):
-        assert {"year_start", "year_end"} <= set(tools[name].inputSchema["properties"]), name
+        assert {"year_start", "year_end"} <= set(tools[name].input_schema["properties"]), name

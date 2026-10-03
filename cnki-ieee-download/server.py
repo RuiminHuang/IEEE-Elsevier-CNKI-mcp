@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, ListToolsResult, CallToolResult, CallToolRequestParams
 
 from carsi_search.engine import CarsiAuth, log
 from carsi_search.registry import list_dbs, get_db, get_adapter
@@ -36,8 +36,6 @@ from carsi_search.databases.base import is_challenge, normalize_journal, year_ra
 from carsi_search.databases.cnki import CnkiAdapter
 
 from playwright.async_api import Page as PwPage
-
-app = Server("cnki-ieee-download")
 
 _auth: CarsiAuth | None = None
 _pages: dict = {}
@@ -211,7 +209,6 @@ async def _ensure_logged_in(db: str) -> tuple[PwPage | None, list[TextContent] |
 # Tool Definitions
 # ══════════════════════════════════════════════════════════════════════
 
-@app.list_tools()
 async def list_tools() -> list[Tool]:
     return [
         # ── IEEE ──
@@ -399,7 +396,6 @@ async def _dispatch(name: str, args: dict) -> list[TextContent]:
     return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
 
-@app.call_tool()
 async def call_tool(name: str, args: dict) -> list[TextContent]:
     t0 = time.time()
     try:
@@ -1006,6 +1002,19 @@ async def handle_cnki_download(args: dict) -> list[TextContent]:
 # ══════════════════════════════════════════════════════════════════════
 # MCP Server Entry
 # ══════════════════════════════════════════════════════════════════════
+
+# mcp 2.x takes request handlers as Server(...) arguments. list_tools() and
+# call_tool() stay plain coroutines, which the tests call directly.
+async def _on_list_tools(ctx, params) -> ListToolsResult:
+    return ListToolsResult(tools=await list_tools())
+
+
+async def _on_call_tool(ctx, params: CallToolRequestParams) -> CallToolResult:
+    return CallToolResult(content=await call_tool(params.name, params.arguments or {}))
+
+
+app = Server("cnki-ieee-download", on_list_tools=_on_list_tools, on_call_tool=_on_call_tool)
+
 
 async def main():
     async with stdio_server() as (read_stream, write_stream):

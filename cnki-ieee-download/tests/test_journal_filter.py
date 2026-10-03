@@ -64,4 +64,4 @@ async def test_journal_combines_with_years(srv, sites, tool):
 async def test_search_schemas_accept_journal():
     tools = {t.name: t for t in await server.list_tools()}
     for name in JOURNALS:
-        assert "journal" in tools[name].inputSchema["properties"], name
+        assert "journal" in tools[name].input_schema["properties"], name
